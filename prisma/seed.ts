@@ -3,67 +3,105 @@ import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 
+const COMMENTS = [
+  "Gute Woche, mehrere Neukunden gewonnen",
+  "Urlaub Mi-Fr",
+  "Messe-Woche, viele Kontakte",
+  "Krankheitsvertretung übernommen",
+  "Fokus auf Bestandskunden",
+  "Schulung am Donnerstag",
+  "Quartalsgespräche geführt",
+  "Teammeeting + Strategie-Workshop",
+  "Starker Endspurt vor Monatsende",
+  "Einarbeitung neuer Kollege",
+];
+
 async function main() {
+  await prisma.auditLog.deleteMany();
+  await prisma.kpiEntry.deleteMany();
+  await prisma.employee.deleteMany();
+  await prisma.user.deleteMany();
+
   const hashedPassword = await bcrypt.hash("admin123", 12);
 
-  const admin = await prisma.user.upsert({
-    where: { email: "admin@hanseaten.de" },
-    update: {},
-    create: {
+  const admin = await prisma.user.create({
+    data: {
       email: "admin@hanseaten.de",
       password: hashedPassword,
       name: "Administrator",
       role: "admin",
     },
   });
-
-  console.log("Admin user created:", admin.email);
+  console.log("Admin:", admin.email);
 
   const employees = [
-    { name: "Max Müller", email: "m.mueller@hanseaten.de", costCenter: "330" },
-    { name: "Lisa Schmidt", email: "l.schmidt@hanseaten.de", costCenter: "330" },
-    { name: "Thomas Weber", email: "t.weber@hanseaten.de", costCenter: "350" },
-    { name: "Anna Fischer", email: "a.fischer@hanseaten.de", costCenter: "350" },
-    { name: "Jan Petersen", email: "j.petersen@hanseaten.de", costCenter: "370" },
-    { name: "Sarah Hansen", email: "s.hansen@hanseaten.de", costCenter: "370" },
+    { name: "Eike", costCenter: "330" },
+    { name: "Rainer", costCenter: "350" },
+    { name: "Norman", costCenter: "350" },
+    { name: "Calvin", costCenter: "370" },
   ];
 
   for (const emp of employees) {
     await prisma.employee.create({ data: emp });
-    console.log("Employee created:", emp.name, "- KST", emp.costCenter);
+    console.log("Employee:", emp.name, "KST", emp.costCenter);
   }
 
   const allEmployees = await prisma.employee.findMany();
-  const today = new Date();
+  const now = new Date();
+
+  // Generate weekly KPI data from Jan 2023 until Mar 2026
+  const endDate = new Date(2026, 2, 23); // March 23, 2026
+  const startWeek = new Date(2023, 0, 2, 12, 0, 0, 0); // Monday 2023-01-02
 
   for (const emp of allEmployees) {
-    for (let i = 0; i < 30; i++) {
-      const date = new Date(today);
-      date.setDate(date.getDate() - i);
-      date.setHours(12, 0, 0, 0);
-      if (date.getDay() === 0 || date.getDay() === 6) continue;
-
+    let weekDate = new Date(startWeek);
+    let weekCount = 0;
+    while (weekDate <= endDate) {
+      const hasComment = Math.random() < 0.2;
       await prisma.kpiEntry.create({
         data: {
           employeeId: emp.id,
-          date,
+          date: new Date(weekDate),
+          periodType: "week",
           costCenter: emp.costCenter,
-          kundenbesuche: Math.floor(Math.random() * 5) + 1,
-          telefonate: Math.floor(Math.random() * 15) + 5,
-          auftraegeAkquiriert: Math.floor(Math.random() * 3),
-          auftraegeAbgeschlossen: Math.floor(Math.random() * 2),
-          profileVerschickt: Math.floor(Math.random() * 8) + 2,
-          vorstellungsgespraeche: Math.floor(Math.random() * 4),
-          externeEinstellungen: Math.floor(Math.random() * 2),
-          eintritte: Math.floor(Math.random() * 2),
-          austritte: Math.random() > 0.7 ? 1 : 0,
+          comment: hasComment ? COMMENTS[Math.floor(Math.random() * COMMENTS.length)] : null,
+          kundenbesuche: Math.floor(Math.random() * 10) + 2,
+          telefonate: Math.floor(Math.random() * 30) + 10,
+          auftraegeAkquiriert: Math.floor(Math.random() * 5),
+          auftraegeAbgeschlossen: Math.floor(Math.random() * 3),
+          profile: Math.floor(Math.random() * 12) + 3,
+          vorstellungsgespraeche: Math.floor(Math.random() * 6) + 1,
+          deals: Math.floor(Math.random() * 3),
+          eintritte: Math.floor(Math.random() * 3),
+          austritte: Math.random() > 0.6 ? Math.floor(Math.random() * 2) + 1 : 0,
         },
       });
+      weekDate.setDate(weekDate.getDate() + 7);
+      weekCount++;
     }
-    console.log("KPI data generated for:", emp.name);
+    console.log(`${weekCount} weeks KPI for:`, emp.name);
   }
 
-  console.log("\nSeed completed! Login with: admin@hanseaten.de / admin123");
+  // Create sample audit log entries
+  const auditActions = [
+    { action: "create", entityType: "Employee", entityId: allEmployees[0].id, changes: JSON.stringify({ name: "Eike", costCenter: "330" }) },
+    { action: "create", entityType: "Employee", entityId: allEmployees[1].id, changes: JSON.stringify({ name: "Rainer", costCenter: "350" }) },
+    { action: "update", entityType: "Employee", entityId: allEmployees[0].id, changes: JSON.stringify({ costCenter: "330" }) },
+    { action: "create", entityType: "KpiEntry", entityId: "sample-1", changes: JSON.stringify({ date: "2026-03-17", employeeId: allEmployees[0].id }) },
+    { action: "create", entityType: "KpiEntry", entityId: "sample-2", changes: JSON.stringify({ date: "2026-03-17", employeeId: allEmployees[1].id }) },
+  ];
+
+  for (const audit of auditActions) {
+    await prisma.auditLog.create({
+      data: {
+        userId: admin.id,
+        ...audit,
+      },
+    });
+  }
+  console.log(`${auditActions.length} audit log entries created`);
+
+  console.log("\nSeed completed! Login: admin@hanseaten.de / admin123");
 }
 
 main()

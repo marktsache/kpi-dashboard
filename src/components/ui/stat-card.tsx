@@ -8,6 +8,7 @@ export interface StatCardProps {
   change?: number;
   trend?: "up" | "down";
   subtitle?: string;
+  accent?: string;
   className?: string;
 }
 
@@ -17,6 +18,7 @@ export function StatCard({
   change,
   trend,
   subtitle,
+  accent = "from-blue-500 to-blue-600",
   className = "",
 }: StatCardProps) {
   const showTrend = trend !== undefined || change !== undefined;
@@ -25,31 +27,32 @@ export function StatCard({
   return (
     <div
       className={`
-        bg-white rounded-xl shadow-sm border border-gray-200
-        border-l-4 border-l-blue-600 p-6
+        group relative bg-white rounded-xl shadow-card hover:shadow-card-hover
+        border border-gray-100 p-4 transition-all duration-200
+        overflow-hidden
         ${className}
       `}
     >
-      <p className="text-sm font-medium text-gray-500">{title}</p>
+      {/* Top accent line */}
+      <div className={`absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r ${accent}`} />
 
-      <div className="mt-2 flex items-baseline gap-3">
-        <p className="text-3xl font-bold text-gray-900">{value}</p>
-
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wide">{title}</p>
         {showTrend && (
           <span
-            className={`inline-flex items-center text-sm font-medium ${
-              isPositive ? "text-green-600" : "text-red-600"
+            className={`inline-flex items-center gap-0.5 text-[11px] font-semibold px-1.5 py-0.5 rounded-md ${
+              isPositive
+                ? "text-emerald-700 bg-emerald-50"
+                : "text-red-700 bg-red-50"
             }`}
           >
-            {isPositive ? (
-              <svg className="h-4 w-4 mr-0.5" fill="none" viewBox="0 0 24 24" strokeWidth="2" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 19.5l15-15m0 0H8.25m11.25 0v11.25" />
-              </svg>
-            ) : (
-              <svg className="h-4 w-4 mr-0.5" fill="none" viewBox="0 0 24 24" strokeWidth="2" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 4.5l15 15m0 0V8.25m0 11.25H8.25" />
-              </svg>
-            )}
+            <svg className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+              {isPositive ? (
+                <path fillRule="evenodd" d="M12 7a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0V8.414l-4.293 4.293a1 1 0 01-1.414 0L8 10.414l-4.293 4.293a1 1 0 01-1.414-1.414l5-5a1 1 0 011.414 0L11 10.586 14.586 7H12z" clipRule="evenodd" />
+              ) : (
+                <path fillRule="evenodd" d="M12 13a1 1 0 100 2h5a1 1 0 001-1V9a1 1 0 10-2 0v2.586l-4.293-4.293a1 1 0 00-1.414 0L8 9.586 3.707 5.293a1 1 0 00-1.414 1.414l5 5a1 1 0 001.414 0L11 9.414 14.586 13H12z" clipRule="evenodd" />
+              )}
+            </svg>
             {change !== undefined && (
               <>{change >= 0 ? "+" : ""}{change}%</>
             )}
@@ -57,7 +60,11 @@ export function StatCard({
         )}
       </div>
 
-      {subtitle && <p className="mt-1 text-sm text-gray-400">{subtitle}</p>}
+      <p className="text-2xl font-bold text-gray-900 mt-1.5 tracking-tight">{value}</p>
+
+      {subtitle && (
+        <p className="text-[11px] text-gray-400 mt-1">{subtitle}</p>
+      )}
     </div>
   );
 }

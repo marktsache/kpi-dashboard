@@ -7,20 +7,21 @@ export interface CardProps {
   subtitle?: string;
   children: React.ReactNode;
   className?: string;
+  compact?: boolean;
 }
 
-export function Card({ title, subtitle, children, className = "" }: CardProps) {
+export function Card({ title, subtitle, children, className = "", compact = false }: CardProps) {
   return (
     <div
-      className={`bg-white rounded-xl shadow-sm border border-gray-200 p-6 ${className}`}
+      className={`bg-white rounded-xl shadow-card border border-gray-100 ${compact ? "p-3" : "p-4"} ${className}`}
     >
       {(title || subtitle) && (
-        <div className="mb-4">
+        <div className={compact ? "mb-2" : "mb-3"}>
           {title && (
-            <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
+            <h3 className="text-sm font-semibold text-gray-900">{title}</h3>
           )}
           {subtitle && (
-            <p className="mt-1 text-sm text-gray-500">{subtitle}</p>
+            <p className="text-[11px] text-gray-400 mt-0.5">{subtitle}</p>
           )}
         </div>
       )}

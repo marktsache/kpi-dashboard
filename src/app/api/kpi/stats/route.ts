@@ -1,14 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 
+/** Get ISO week number (1-53) for a Date. */
+function getISOWeek(d: Date): number {
+  const tmp = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  tmp.setUTCDate(tmp.getUTCDate() + 4 - (tmp.getUTCDay() || 7));
+  const yearStart = new Date(Date.UTC(tmp.getUTCFullYear(), 0, 1));
+  return Math.ceil(((tmp.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
+}
+
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const costCenter = searchParams.get("costCenter");
+  const viewMode = searchParams.get("viewMode") || searchParams.get("periodType") || "week";
   const from = searchParams.get("from");
   const to = searchParams.get("to");
+  const employeeId = searchParams.get("employeeId");
 
+  // Always load ALL weekly entries (no periodType filter)
   const where: Record<string, unknown> = {};
   if (costCenter && costCenter !== "all") where.costCenter = costCenter;
+  if (employeeId) where.employeeId = employeeId;
   if (from || to) {
     where.date = {
       ...(from && { gte: new Date(from) }),
@@ -16,123 +28,164 @@ export async function GET(request: NextRequest) {
     };
   }
 
-  const entries = await prisma.kpiEntry.findMany({ where });
+  const entries = await prisma.kpiEntry.findMany({
+    where,
+    orderBy: { date: "asc" },
+    include: { employee: { select: { name: true } } },
+  });
 
-  const totals = entries.reduce(
-    (acc, entry) => ({
-      kundenbesuche: acc.kundenbesuche + entry.kundenbesuche,
-      telefonate: acc.telefonate + entry.telefonate,
-      auftraegeAkquiriert: acc.auftraegeAkquiriert + entry.auftraegeAkquiriert,
-      auftraegeAbgeschlossen: acc.auftraegeAbgeschlossen + entry.auftraegeAbgeschlossen,
-      profileVerschickt: acc.profileVerschickt + entry.profileVerschickt,
-      vorstellungsgespraeche: acc.vorstellungsgespraeche + entry.vorstellungsgespraeche,
-      externeEinstellungen: acc.externeEinstellungen + entry.externeEinstellungen,
-      eintritte: acc.eintritte + entry.eintritte,
-      austritte: acc.austritte + entry.austritte,
-    }),
-    {
-      kundenbesuche: 0,
-      telefonate: 0,
-      auftraegeAkquiriert: 0,
-      auftraegeAbgeschlossen: 0,
-      profileVerschickt: 0,
-      vorstellungsgespraeche: 0,
-      externeEinstellungen: 0,
-      eintritte: 0,
-      austritte: 0,
-    }
-  );
+  const zero = {
+    kundenbesuche: 0, telefonate: 0,
+    auftraegeAkquiriert: 0, auftraegeAbgeschlossen: 0,
+    profile: 0, vorstellungsgespraeche: 0, deals: 0,
+    eintritte: 0, austritte: 0,
+  };
+
+  type ZeroType = typeof zero;
+
+  const addEntry = (acc: ZeroType, e: { kundenbesuche: number; telefonate: number; auftraegeAkquiriert: number; auftraegeAbgeschlossen: number; profile: number; vorstellungsgespraeche: number; deals: number; eintritte: number; austritte: number }) => ({
+    kundenbesuche: acc.kundenbesuche + e.kundenbesuche,
+    telefonate: acc.telefonate + e.telefonate,
+    auftraegeAkquiriert: acc.auftraegeAkquiriert + e.auftraegeAkquiriert,
+    auftraegeAbgeschlossen: acc.auftraegeAbgeschlossen + e.auftraegeAbgeschlossen,
+    profile: acc.profile + e.profile,
+    vorstellungsgespraeche: acc.vorstellungsgespraeche + e.vorstellungsgespraeche,
+    deals: acc.deals + e.deals,
+    eintritte: acc.eintritte + e.eintritte,
+    austritte: acc.austritte + e.austritte,
+  });
+
+  const totals = entries.reduce((acc, e) => addEntry(acc, e), { ...zero });
 
   const kontakte = totals.kundenbesuche + totals.telefonate;
-  const hitRate =
-    totals.auftraegeAkquiriert > 0
-      ? Math.round((totals.auftraegeAbgeschlossen / totals.auftraegeAkquiriert) * 100)
-      : 0;
-  const conversionRate =
-    kontakte > 0
-      ? Math.round((totals.auftraegeAbgeschlossen / kontakte) * 100)
-      : 0;
-  const besetzungsquote =
-    totals.profileVerschickt > 0
-      ? Math.round((totals.externeEinstellungen / totals.profileVerschickt) * 100)
-      : 0;
-  const nettoVeraenderung = totals.eintritte - totals.austritte;
-  const fluktuationsrate =
-    totals.eintritte > 0
-      ? Math.round((totals.austritte / totals.eintritte) * 100)
-      : 0;
-  const profileProBesetzung =
-    totals.externeEinstellungen > 0
-      ? Math.round((totals.profileVerschickt / totals.externeEinstellungen) * 10) / 10
-      : 0;
+  const hitRate = totals.auftraegeAkquiriert > 0
+    ? Math.round((totals.auftraegeAbgeschlossen / totals.auftraegeAkquiriert) * 100) : 0;
+  const conversionRate = kontakte > 0
+    ? Math.round((totals.auftraegeAbgeschlossen / kontakte) * 100) : 0;
+  const dealQuote = totals.profile > 0
+    ? Math.round((totals.deals / totals.profile) * 1000) / 10 : 0;
+  const maWachstum = totals.eintritte - totals.austritte;
 
-  // Trend data grouped by date
-  const trendMap = new Map<string, typeof totals>();
-  for (const entry of entries) {
-    const dateKey = new Date(entry.date).toISOString().split("T")[0];
-    const existing = trendMap.get(dateKey) || {
-      kundenbesuche: 0, telefonate: 0, auftraegeAkquiriert: 0,
-      auftraegeAbgeschlossen: 0, profileVerschickt: 0,
-      vorstellungsgespraeche: 0, externeEinstellungen: 0,
-      eintritte: 0, austritte: 0,
-    };
-    trendMap.set(dateKey, {
-      kundenbesuche: existing.kundenbesuche + entry.kundenbesuche,
-      telefonate: existing.telefonate + entry.telefonate,
-      auftraegeAkquiriert: existing.auftraegeAkquiriert + entry.auftraegeAkquiriert,
-      auftraegeAbgeschlossen: existing.auftraegeAbgeschlossen + entry.auftraegeAbgeschlossen,
-      profileVerschickt: existing.profileVerschickt + entry.profileVerschickt,
-      vorstellungsgespraeche: existing.vorstellungsgespraeche + entry.vorstellungsgespraeche,
-      externeEinstellungen: existing.externeEinstellungen + entry.externeEinstellungen,
-      eintritte: existing.eintritte + entry.eintritte,
-      austritte: existing.austritte + entry.austritte,
-    });
+  // ---------------------------------------------------------------------------
+  // Trends: grouped by month or by KW depending on viewMode
+  // ---------------------------------------------------------------------------
+  const monthNames = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
+
+  let trends: Array<Record<string, string | number | string[]>>;
+
+  if (viewMode === "month") {
+    // Group weekly entries by calendar month
+    const monthBuckets: ZeroType[] = Array.from({ length: 12 }, () => ({ ...zero }));
+    const monthComments: string[][] = Array.from({ length: 12 }, () => []);
+    for (const entry of entries) {
+      const m = new Date(entry.date).getMonth(); // 0-11
+      monthBuckets[m] = addEntry(monthBuckets[m], entry);
+      if (entry.comment) {
+        monthComments[m].push(`${entry.employee.name}: ${entry.comment}`);
+      }
+    }
+    trends = monthBuckets.map((data, i) => ({ label: monthNames[i], ...data, _comments: monthComments[i] }));
+  } else {
+    // 52 KW buckets
+    const weekBuckets: ZeroType[] = Array.from({ length: 52 }, () => ({ ...zero }));
+    const weekComments: string[][] = Array.from({ length: 52 }, () => []);
+    for (const entry of entries) {
+      const kw = getISOWeek(new Date(entry.date));
+      const idx = Math.min(kw - 1, 51);
+      weekBuckets[idx] = addEntry(weekBuckets[idx], entry);
+      if (entry.comment) {
+        weekComments[idx].push(`${entry.employee.name}: ${entry.comment}`);
+      }
+    }
+    trends = weekBuckets.map((data, i) => ({ label: `KW ${i + 1}`, ...data, _comments: weekComments[i] }));
   }
 
-  const trends = Array.from(trendMap.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([date, data]) => ({ date, ...data }));
-
-  // Per cost center breakdown
-  const byCostCenter = new Map<string, typeof totals>();
+  // By cost center
+  const byCostCenter = new Map<string, ZeroType>();
   for (const entry of entries) {
-    const existing = byCostCenter.get(entry.costCenter) || {
-      kundenbesuche: 0, telefonate: 0, auftraegeAkquiriert: 0,
-      auftraegeAbgeschlossen: 0, profileVerschickt: 0,
-      vorstellungsgespraeche: 0, externeEinstellungen: 0,
-      eintritte: 0, austritte: 0,
-    };
-    byCostCenter.set(entry.costCenter, {
-      kundenbesuche: existing.kundenbesuche + entry.kundenbesuche,
-      telefonate: existing.telefonate + entry.telefonate,
-      auftraegeAkquiriert: existing.auftraegeAkquiriert + entry.auftraegeAkquiriert,
-      auftraegeAbgeschlossen: existing.auftraegeAbgeschlossen + entry.auftraegeAbgeschlossen,
-      profileVerschickt: existing.profileVerschickt + entry.profileVerschickt,
-      vorstellungsgespraeche: existing.vorstellungsgespraeche + entry.vorstellungsgespraeche,
-      externeEinstellungen: existing.externeEinstellungen + entry.externeEinstellungen,
-      eintritte: existing.eintritte + entry.eintritte,
-      austritte: existing.austritte + entry.austritte,
-    });
+    const existing = byCostCenter.get(entry.costCenter) || { ...zero };
+    byCostCenter.set(entry.costCenter, addEntry(existing, entry));
   }
-
   const costCenterBreakdown = Array.from(byCostCenter.entries()).map(([cc, data]) => ({
-    costCenter: cc,
-    ...data,
+    costCenter: cc, ...data,
   }));
+
+  // Year comparison: monthly data grouped by year+month (from weekly entries)
+  const yearCompare = new Map<string, Map<number, ZeroType>>();
+  for (const entry of entries) {
+    const d = new Date(entry.date);
+    const year = String(d.getFullYear());
+    const month = d.getMonth();
+    if (!yearCompare.has(year)) yearCompare.set(year, new Map());
+    const yearMap = yearCompare.get(year)!;
+    const existing = yearMap.get(month) || { ...zero };
+    yearMap.set(month, addEntry(existing, entry));
+  }
+
+  const years = Array.from(yearCompare.keys()).sort();
+  const yearComparison = monthNames.map((name, idx) => {
+    const row: Record<string, unknown> = { month: name };
+    for (const year of years) {
+      const data = yearCompare.get(year)?.get(idx);
+      row[`eintritte_${year}`] = data?.eintritte || 0;
+      row[`austritte_${year}`] = data?.austritte || 0;
+      row[`profile_${year}`] = data?.profile || 0;
+      row[`vorstellungsgespraeche_${year}`] = data?.vorstellungsgespraeche || 0;
+      row[`deals_${year}`] = data?.deals || 0;
+    }
+    return row;
+  });
+
+  // ---------------------------------------------------------------------------
+  // Previous period comparison
+  // ---------------------------------------------------------------------------
+  let previousTotals: ZeroType | null = null;
+  let previousComputed: Record<string, number> | null = null;
+
+  if (from && to) {
+    const fromDate = new Date(from);
+    const toDate = new Date(to);
+    const duration = toDate.getTime() - fromDate.getTime();
+    const prevFrom = new Date(fromDate.getTime() - duration - 86400000);
+    const prevTo = new Date(fromDate.getTime() - 86400000);
+
+    const prevEntries = await prisma.kpiEntry.findMany({
+      where: {
+        ...((costCenter && costCenter !== "all") ? { costCenter } : {}),
+        ...(employeeId ? { employeeId } : {}),
+        date: { gte: prevFrom, lte: prevTo },
+      },
+      orderBy: { date: "asc" },
+    });
+
+    previousTotals = prevEntries.reduce((acc, e) => addEntry(acc, e), { ...zero });
+    const prevKontakte = previousTotals.kundenbesuche + previousTotals.telefonate;
+    const prevHitRate = previousTotals.auftraegeAkquiriert > 0
+      ? Math.round((previousTotals.auftraegeAbgeschlossen / previousTotals.auftraegeAkquiriert) * 100) : 0;
+    const prevConversionRate = prevKontakte > 0
+      ? Math.round((previousTotals.auftraegeAbgeschlossen / prevKontakte) * 100) : 0;
+    const prevDealQuote = previousTotals.profile > 0
+      ? Math.round((previousTotals.deals / previousTotals.profile) * 1000) / 10 : 0;
+    const prevMaWachstum = previousTotals.eintritte - previousTotals.austritte;
+
+    previousComputed = {
+      kontakte: prevKontakte,
+      hitRate: prevHitRate,
+      conversionRate: prevConversionRate,
+      dealQuote: prevDealQuote,
+      maWachstum: prevMaWachstum,
+    };
+  }
 
   return NextResponse.json({
     totals,
-    computed: {
-      kontakte,
-      hitRate,
-      conversionRate,
-      besetzungsquote,
-      nettoVeraenderung,
-      fluktuationsrate,
-      profileProBesetzung,
-    },
+    computed: { kontakte, hitRate, conversionRate, dealQuote, maWachstum },
     trends,
     costCenterBreakdown,
+    yearComparison,
+    years,
     entryCount: entries.length,
+    previousTotals,
+    previousComputed,
   });
 }

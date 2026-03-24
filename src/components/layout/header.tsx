@@ -16,28 +16,24 @@ export default function Header({ pageTitle }: HeaderProps) {
         .join("")
         .toUpperCase()
         .slice(0, 2)
-    : "??";
+    : "?";
 
   return (
-    <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-gray-200 bg-white px-6">
-      {/* Page title */}
-      <h2 className="text-xl font-semibold text-gray-900">{pageTitle}</h2>
+    <header className="sticky top-0 z-30 flex h-12 items-center justify-between border-b border-gray-200/60 bg-white/80 backdrop-blur-xl px-5">
+      <h2 className="text-sm font-semibold text-gray-900">{pageTitle}</h2>
 
-      {/* User info */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2.5">
         {session?.user && (
           <>
             <div className="text-right hidden sm:block">
-              <p className="text-sm font-medium text-gray-900 leading-tight">
+              <p className="text-xs font-medium text-gray-700 leading-none">
                 {session.user.name ?? "Benutzer"}
               </p>
-              <p className="text-xs text-gray-500 leading-tight">
+              <p className="text-[10px] text-gray-400 leading-none mt-0.5">
                 {session.user.email ?? ""}
               </p>
             </div>
-
-            {/* Avatar placeholder */}
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-700 text-white text-xs font-bold">
+            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-navy-700 to-navy-900 text-white text-[10px] font-bold ring-2 ring-white shadow-sm">
               {userInitials}
             </div>
           </>

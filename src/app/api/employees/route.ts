@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
+import { employeeCreateSchema } from "@/lib/validation";
+import { logAudit } from "@/lib/audit";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -20,16 +24,25 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const session = await getServerSession(authOptions);
+  const userId = session?.user?.id || "unknown";
   const body = await request.json();
-  const { name, email, costCenter } = body;
 
-  if (!name || !costCenter) {
-    return NextResponse.json({ error: "Name und Kostenstelle sind erforderlich" }, { status: 400 });
+  const parseResult = employeeCreateSchema.safeParse(body);
+  if (!parseResult.success) {
+    return NextResponse.json(
+      { error: "Validierungsfehler", details: parseResult.error.flatten() },
+      { status: 400 }
+    );
   }
+
+  const { name, email, costCenter } = parseResult.data;
 
   const employee = await prisma.employee.create({
     data: { name, email: email || null, costCenter },
   });
+
+  logAudit({ userId, action: "create", entityType: "Employee", entityId: employee.id, changes: { name, email, costCenter } });
 
   return NextResponse.json(employee, { status: 201 });
 }

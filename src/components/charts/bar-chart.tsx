@@ -29,16 +29,13 @@ export function KpiBarChart({
   data,
   xKey,
   bars,
-  height = 300,
+  height = 240,
   stacked = false,
 }: BarChartProps) {
   if (!data || data.length === 0) {
     return (
-      <div
-        className="flex items-center justify-center text-gray-400"
-        style={{ height }}
-      >
-        Keine Daten
+      <div className="flex items-center justify-center text-xs text-gray-300" style={{ height }}>
+        Keine Daten vorhanden
       </div>
     );
   }
@@ -47,34 +44,35 @@ export function KpiBarChart({
 
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <RechartsBarChart
-        data={data}
-        margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
-      >
-        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
+      <RechartsBarChart data={data} margin={{ top: 4, right: 8, left: -12, bottom: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
         <XAxis
           dataKey={xKey}
-          tick={{ fontSize: 12, fill: "#6b7280" }}
+          tick={{ fontSize: 10, fill: "#94a3b8" }}
           tickLine={false}
-          axisLine={{ stroke: "#d1d5db" }}
+          axisLine={false}
         />
         <YAxis
-          tick={{ fontSize: 12, fill: "#6b7280" }}
+          tick={{ fontSize: 10, fill: "#94a3b8" }}
           tickLine={false}
-          axisLine={{ stroke: "#d1d5db" }}
+          axisLine={false}
+          width={32}
         />
         <Tooltip
           contentStyle={{
             backgroundColor: "#fff",
-            border: "1px solid #e5e7eb",
+            border: "1px solid #e2e8f0",
             borderRadius: "8px",
-            boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)",
-            fontSize: 13,
+            boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+            fontSize: 11,
+            padding: "8px 12px",
           }}
-          cursor={{ fill: "rgba(107, 114, 128, 0.06)" }}
+          cursor={{ fill: "rgba(148, 163, 184, 0.06)" }}
+          formatter={(value) => [typeof value === "number" ? value.toLocaleString("de-DE") : String(value), undefined]}
         />
         <Legend
-          wrapperStyle={{ fontSize: 13, paddingTop: 8 }}
+          wrapperStyle={{ fontSize: 10, paddingTop: 4 }}
+          iconSize={8}
         />
         {bars.map((bar) => (
           <Bar
@@ -83,7 +81,8 @@ export function KpiBarChart({
             name={bar.name}
             fill={bar.color}
             stackId={stackId}
-            radius={stacked ? 0 : [4, 4, 0, 0]}
+            radius={stacked ? 0 : [3, 3, 0, 0]}
+            maxBarSize={40}
           />
         ))}
       </RechartsBarChart>

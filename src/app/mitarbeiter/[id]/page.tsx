@@ -18,13 +18,14 @@ interface KpiEntry {
   id: string;
   date: string;
   costCenter: string;
+  comment: string | null;
   kundenbesuche: number;
   telefonate: number;
   auftraegeAkquiriert: number;
   auftraegeAbgeschlossen: number;
-  profileVerschickt: number;
+  profile: number;
   vorstellungsgespraeche: number;
-  externeEinstellungen: number;
+  deals: number;
   eintritte: number;
   austritte: number;
   createdAt: string;
@@ -47,9 +48,9 @@ interface KpiSummary {
   telefonate: number;
   auftraegeAkquiriert: number;
   auftraegeAbgeschlossen: number;
-  profileVerschickt: number;
+  profile: number;
   vorstellungsgespraeche: number;
-  externeEinstellungen: number;
+  deals: number;
   eintritte: number;
   austritte: number;
 }
@@ -68,9 +69,9 @@ function computeSummary(entries: KpiEntry[]): KpiSummary {
       telefonate: acc.telefonate + entry.telefonate,
       auftraegeAkquiriert: acc.auftraegeAkquiriert + entry.auftraegeAkquiriert,
       auftraegeAbgeschlossen: acc.auftraegeAbgeschlossen + entry.auftraegeAbgeschlossen,
-      profileVerschickt: acc.profileVerschickt + entry.profileVerschickt,
+      profile: acc.profile + entry.profile,
       vorstellungsgespraeche: acc.vorstellungsgespraeche + entry.vorstellungsgespraeche,
-      externeEinstellungen: acc.externeEinstellungen + entry.externeEinstellungen,
+      deals: acc.deals + entry.deals,
       eintritte: acc.eintritte + entry.eintritte,
       austritte: acc.austritte + entry.austritte,
     }),
@@ -80,9 +81,9 @@ function computeSummary(entries: KpiEntry[]): KpiSummary {
       telefonate: 0,
       auftraegeAkquiriert: 0,
       auftraegeAbgeschlossen: 0,
-      profileVerschickt: 0,
+      profile: 0,
       vorstellungsgespraeche: 0,
-      externeEinstellungen: 0,
+      deals: 0,
       eintritte: 0,
       austritte: 0,
     }
@@ -199,7 +200,7 @@ export default function MitarbeiterDetailPage() {
             href="/mitarbeiter"
             className="text-blue-600 hover:text-blue-800 font-medium text-sm underline"
           >
-            Zur&uuml;ck zur &Uuml;bersicht
+            Zurück zur Übersicht
           </Link>
         </div>
       </AppShell>
@@ -216,6 +217,11 @@ export default function MitarbeiterDetailPage() {
     summary.auftraegeAkquiriert > 0
       ? ((summary.auftraegeAbgeschlossen / summary.auftraegeAkquiriert) * 100).toFixed(1)
       : "0.0";
+  const dealQuote =
+    summary.profile > 0
+      ? ((summary.deals / summary.profile) * 100).toFixed(1)
+      : "0.0";
+  const maWachstum = summary.eintritte - summary.austritte;
 
   return (
     <AppShell pageTitle={employee.name}>
@@ -234,7 +240,7 @@ export default function MitarbeiterDetailPage() {
           >
             <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
           </svg>
-          Zur&uuml;ck zur &Uuml;bersicht
+          Zurück zur Übersicht
         </Link>
       </div>
 
@@ -304,53 +310,56 @@ export default function MitarbeiterDetailPage() {
       <h3 className="text-lg font-semibold text-gray-900 mb-4">KPI-Zusammenfassung</h3>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         <StatCard
-          title="Kundenkontakte"
-          value={kontakte}
-          subtitle={`${summary.kundenbesuche} Besuche + ${summary.telefonate} Telefonate`}
+          title="Profile"
+          value={summary.profile}
+          subtitle={`Gesamt verschickte Profile`}
         />
         <StatCard
-          title="Auftr&auml;ge akquiriert"
-          value={summary.auftraegeAkquiriert}
-          subtitle={`Hit Rate: ${hitRate}%`}
+          title="Vorstellungsgespräche"
+          value={summary.vorstellungsgespraeche}
+          subtitle={`VG&apos;s gesamt`}
         />
         <StatCard
-          title="Abschl&uuml;sse"
-          value={summary.auftraegeAbgeschlossen}
-          subtitle={`Conversion: ${conversionRate}%`}
+          title="Deals"
+          value={summary.deals}
+          subtitle={`Deal-Quote: ${dealQuote}%`}
         />
         <StatCard
-          title="Externe Einstellungen"
-          value={summary.externeEinstellungen}
-          subtitle={`Profile: ${summary.profileVerschickt} | VG: ${summary.vorstellungsgespraeche}`}
+          title="MA-Wachstum"
+          value={maWachstum}
+          subtitle={`${summary.eintritte} Eintritte - ${summary.austritte} Austritte`}
         />
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         <StatCard
-          title="Profile verschickt"
-          value={summary.profileVerschickt}
+          title="Kundenkontakte"
+          value={kontakte}
+          subtitle={`${summary.kundenbesuche} Besuche + ${summary.telefonate} Telefonate`}
         />
         <StatCard
-          title="Vorstellungsgespr&auml;che"
-          value={summary.vorstellungsgespraeche}
+          title="Aufträge akquiriert"
+          value={summary.auftraegeAkquiriert}
+          subtitle={`Hit Rate: ${hitRate}%`}
         />
         <StatCard
-          title="Eintritte"
-          value={summary.eintritte}
+          title="Abschlüsse"
+          value={summary.auftraegeAbgeschlossen}
+          subtitle={`Conversion: ${conversionRate}%`}
         />
         <StatCard
-          title="Austritte"
-          value={summary.austritte}
+          title="Einträge gesamt"
+          value={summary.totalEntries}
         />
       </div>
 
       {/* KPI Entries Table */}
       <h3 className="text-lg font-semibold text-gray-900 mb-4">
-        KPI-Eintr&auml;ge ({summary.totalEntries})
+        KPI-Einträge ({summary.totalEntries})
       </h3>
       {employee.kpiEntries.length === 0 ? (
         <Card className="text-center py-12">
-          <p className="text-gray-500 text-sm">Keine KPI-Eintr&auml;ge vorhanden.</p>
+          <p className="text-gray-500 text-sm">Keine KPI-Einträge vorhanden.</p>
         </Card>
       ) : (
         <Card className="overflow-hidden !p-0">
@@ -365,10 +374,11 @@ export default function MitarbeiterDetailPage() {
                   <th className="px-4 py-3 font-medium text-gray-600 text-right whitespace-nowrap">Akquiriert</th>
                   <th className="px-4 py-3 font-medium text-gray-600 text-right whitespace-nowrap">Abgeschl.</th>
                   <th className="px-4 py-3 font-medium text-gray-600 text-right whitespace-nowrap">Profile</th>
-                  <th className="px-4 py-3 font-medium text-gray-600 text-right whitespace-nowrap">VG</th>
-                  <th className="px-4 py-3 font-medium text-gray-600 text-right whitespace-nowrap">Ext. Einst.</th>
+                  <th className="px-4 py-3 font-medium text-gray-600 text-right whitespace-nowrap">VG&apos;s</th>
+                  <th className="px-4 py-3 font-medium text-gray-600 text-right whitespace-nowrap">Deals</th>
                   <th className="px-4 py-3 font-medium text-gray-600 text-right whitespace-nowrap">Eintritte</th>
                   <th className="px-4 py-3 font-medium text-gray-600 text-right whitespace-nowrap">Austritte</th>
+                  <th className="px-4 py-3 font-medium text-gray-600 whitespace-nowrap">Kommentar</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -384,11 +394,14 @@ export default function MitarbeiterDetailPage() {
                     <td className="px-4 py-3 text-right text-gray-700">{entry.telefonate}</td>
                     <td className="px-4 py-3 text-right text-gray-700">{entry.auftraegeAkquiriert}</td>
                     <td className="px-4 py-3 text-right text-gray-700">{entry.auftraegeAbgeschlossen}</td>
-                    <td className="px-4 py-3 text-right text-gray-700">{entry.profileVerschickt}</td>
+                    <td className="px-4 py-3 text-right text-gray-700">{entry.profile}</td>
                     <td className="px-4 py-3 text-right text-gray-700">{entry.vorstellungsgespraeche}</td>
-                    <td className="px-4 py-3 text-right text-gray-700">{entry.externeEinstellungen}</td>
+                    <td className="px-4 py-3 text-right text-gray-700">{entry.deals}</td>
                     <td className="px-4 py-3 text-right text-gray-700">{entry.eintritte}</td>
                     <td className="px-4 py-3 text-right text-gray-700">{entry.austritte}</td>
+                    <td className="px-4 py-3 text-gray-500 text-xs max-w-[200px] truncate" title={entry.comment || ""}>
+                      {entry.comment || "–"}
+                    </td>
                   </tr>
                 ))}
               </tbody>

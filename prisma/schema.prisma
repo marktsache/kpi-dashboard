@@ -30,7 +30,9 @@ model KpiEntry {
   employeeId String
   employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   date       DateTime
+  periodType String   @default("week")
   costCenter String
+  comment    String?
 
   // Vertrieb
   kundenbesuche          Int @default(0)
@@ -38,10 +40,10 @@ model KpiEntry {
   auftraegeAkquiriert    Int @default(0)
   auftraegeAbgeschlossen Int @default(0)
 
-  // Profile & Recruiting
-  profileVerschickt      Int @default(0)
+  // Profile / Recruiting
+  profile                Int @default(0)
   vorstellungsgespraeche Int @default(0)
-  externeEinstellungen   Int @default(0)
+  deals                  Int @default(0)
 
   // Personal
   eintritte Int @default(0)
@@ -51,4 +53,14 @@ model KpiEntry {
   updatedAt DateTime @updatedAt
 
   @@unique([employeeId, date])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String
+  action     String
+  entityType String
+  entityId   String
+  changes    String
+  createdAt  DateTime @default(now())
 }

@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
+import { employeeUpdateSchema } from "@/lib/validation";
+import { logAudit } from "@/lib/audit";
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -19,8 +23,19 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
 
 export async function PUT(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const session = await getServerSession(authOptions);
+  const userId = session?.user?.id || "unknown";
   const body = await request.json();
-  const { name, email, costCenter, active } = body;
+
+  const parseResult = employeeUpdateSchema.safeParse(body);
+  if (!parseResult.success) {
+    return NextResponse.json(
+      { error: "Validierungsfehler", details: parseResult.error.flatten() },
+      { status: 400 }
+    );
+  }
+
+  const { name, email, costCenter, active } = parseResult.data;
 
   const employee = await prisma.employee.update({
     where: { id },
@@ -32,11 +47,18 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     },
   });
 
+  logAudit({ userId, action: "update", entityType: "Employee", entityId: id, changes: parseResult.data });
+
   return NextResponse.json(employee);
 }
 
 export async function DELETE(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const session = await getServerSession(authOptions);
+  const userId = session?.user?.id || "unknown";
+
+  logAudit({ userId, action: "delete", entityType: "Employee", entityId: id, changes: {} });
+
   await prisma.employee.delete({ where: { id } });
   return NextResponse.json({ success: true });
 }

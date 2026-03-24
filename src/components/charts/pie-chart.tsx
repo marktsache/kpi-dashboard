@@ -21,14 +21,11 @@ interface PieChartProps {
   donut?: boolean;
 }
 
-export function KpiPieChart({ data, height = 300, donut = true }: PieChartProps) {
+export function KpiPieChart({ data, height = 240, donut = true }: PieChartProps) {
   if (!data || data.length === 0) {
     return (
-      <div
-        className="flex items-center justify-center text-gray-400"
-        style={{ height }}
-      >
-        Keine Daten
+      <div className="flex items-center justify-center text-xs text-gray-300" style={{ height }}>
+        Keine Daten vorhanden
       </div>
     );
   }
@@ -56,17 +53,19 @@ export function KpiPieChart({ data, height = 300, donut = true }: PieChartProps)
         <Tooltip
           contentStyle={{
             backgroundColor: "#fff",
-            border: "1px solid #e5e7eb",
+            border: "1px solid #e2e8f0",
             borderRadius: "8px",
-            boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)",
-            fontSize: 13,
+            boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+            fontSize: 11,
+            padding: "8px 12px",
           }}
           formatter={(value) => typeof value === "number" ? value.toLocaleString("de-DE") : String(value)}
         />
         <Legend
-          wrapperStyle={{ fontSize: 13, paddingTop: 8 }}
+          wrapperStyle={{ fontSize: 10, paddingTop: 4 }}
+          iconSize={8}
           formatter={(value: string) => (
-            <span className="text-gray-600">{value}</span>
+            <span className="text-gray-500">{value}</span>
           )}
         />
       </RechartsPieChart>

@@ -10,11 +10,11 @@ interface AppShellProps {
 
 export function AppShell({ children, pageTitle }: AppShellProps) {
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-[var(--background)] bg-mesh">
       <Sidebar />
-      <div className="pl-64">
+      <div className="pl-[var(--sidebar-width)]">
         <Header pageTitle={pageTitle} />
-        <main className="p-6">{children}</main>
+        <main className="p-5 animate-fade-in">{children}</main>
       </div>
     </div>
   );

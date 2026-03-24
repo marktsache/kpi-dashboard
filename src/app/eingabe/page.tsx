@@ -9,6 +9,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Loading } from "@/components/ui/loading";
+import { useToast } from "@/components/ui/toast";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -27,9 +28,9 @@ interface KpiValues {
   telefonate: number;
   auftraegeAkquiriert: number;
   auftraegeAbgeschlossen: number;
-  profileVerschickt: number;
+  profile: number;
   vorstellungsgespraeche: number;
-  externeEinstellungen: number;
+  deals: number;
   eintritte: number;
   austritte: number;
 }
@@ -38,6 +39,12 @@ interface BatchRow extends KpiValues {
   employeeId: string;
   employeeName: string;
   costCenter: string;
+  comment: string;
+}
+
+interface MissingWeeksInfo {
+  employeeName: string;
+  missingWeeks: number[];
 }
 
 const EMPTY_KPI: KpiValues = {
@@ -45,9 +52,9 @@ const EMPTY_KPI: KpiValues = {
   telefonate: 0,
   auftraegeAkquiriert: 0,
   auftraegeAbgeschlossen: 0,
-  profileVerschickt: 0,
+  profile: 0,
   vorstellungsgespraeche: 0,
-  externeEinstellungen: 0,
+  deals: 0,
   eintritte: 0,
   austritte: 0,
 };
@@ -59,22 +66,21 @@ const KPI_FIELDS: {
   {
     section: "Vertrieb",
     fields: [
-      { key: "kundenbesuche", label: "Kundenbesuche" },
       { key: "telefonate", label: "Telefonate" },
-      { key: "auftraegeAkquiriert", label: "Auftr\u00e4ge akquiriert" },
-      { key: "auftraegeAbgeschlossen", label: "Auftr\u00e4ge abgeschlossen" },
+      { key: "auftraegeAkquiriert", label: "Aufträge akquiriert" },
+      { key: "auftraegeAbgeschlossen", label: "Aufträge abgeschlossen" },
     ],
   },
   {
-    section: "Recruiting",
+    section: "Profile",
     fields: [
-      { key: "profileVerschickt", label: "Profile verschickt" },
-      { key: "vorstellungsgespraeche", label: "Vorstellungsgespr\u00e4che" },
-      { key: "externeEinstellungen", label: "Externe Einstellungen" },
+      { key: "profile", label: "Profile" },
+      { key: "vorstellungsgespraeche", label: "VG's" },
+      { key: "deals", label: "Deals" },
     ],
   },
   {
-    section: "Personal",
+    section: "Einstellungen",
     fields: [
       { key: "eintritte", label: "Eintritte" },
       { key: "austritte", label: "Austritte" },
@@ -90,9 +96,56 @@ const ALL_KPI_KEYS: (keyof KpiValues)[] = KPI_FIELDS.flatMap((s) =>
 // Helpers
 // ---------------------------------------------------------------------------
 
+function localISO(d: Date): string {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function toMonday(dateStr: string): string {
+  const d = new Date(dateStr + "T12:00:00");
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  return localISO(d);
+}
+
+function toSunday(mondayStr: string): string {
+  const d = new Date(mondayStr + "T12:00:00");
+  d.setDate(d.getDate() + 6);
+  return localISO(d);
+}
+
+function getISOWeek(dateStr: string): number {
+  const d = new Date(dateStr + "T12:00:00");
+  d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7));
+  const week1 = new Date(d.getFullYear(), 0, 4);
+  return 1 + Math.round(((d.getTime() - week1.getTime()) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7);
+}
+
+function formatDE(dateStr: string): string {
+  const parts = dateStr.split("-");
+  return `${parts[2]}.${parts[1]}.${parts[0]}`;
+}
+
 function todayString(): string {
   const d = new Date();
   return d.toISOString().slice(0, 10);
+}
+
+/** Get the Monday of ISO week N in a given year */
+function getMondayOfWeek(year: number, week: number): Date {
+  const jan4 = new Date(year, 0, 4);
+  const dayOfWeek = jan4.getDay() || 7;
+  const monday = new Date(jan4);
+  monday.setDate(jan4.getDate() - dayOfWeek + 1 + (week - 1) * 7);
+  return monday;
+}
+
+/** Get current ISO week number */
+function currentISOWeek(): number {
+  return getISOWeek(todayString());
 }
 
 // ---------------------------------------------------------------------------
@@ -102,23 +155,34 @@ function todayString(): string {
 export default function EingabePage() {
   const { status } = useSession();
   const router = useRouter();
+  const toast = useToast();
 
   // Global state
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loadingEmployees, setLoadingEmployees] = useState(true);
-  const [date, setDate] = useState(todayString);
+  const [date, setDate] = useState(() => toMonday(todayString()));
   const [batchMode, setBatchMode] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [successMessage, setSuccessMessage] = useState("");
-  const [errorMessage, setErrorMessage] = useState("");
 
   // Single-entry state
   const [selectedEmployeeId, setSelectedEmployeeId] = useState("");
   const [singleValues, setSingleValues] = useState<KpiValues>({ ...EMPTY_KPI });
+  const [singleComment, setSingleComment] = useState("");
   const [loadingExisting, setLoadingExisting] = useState(false);
 
   // Batch state
   const [batchRows, setBatchRows] = useState<BatchRow[]>([]);
+
+  // Missing weeks
+  const [missingWeeks, setMissingWeeks] = useState<MissingWeeksInfo[]>([]);
+
+  // -----------------------------------------------------------------------
+  // Date change handler - always snap to Monday
+  // -----------------------------------------------------------------------
+
+  const handleDateChange = (raw: string) => {
+    setDate(toMonday(raw));
+  };
 
   // -----------------------------------------------------------------------
   // Auth guard
@@ -139,22 +203,71 @@ export default function EingabePage() {
       .then((r) => r.json())
       .then((data: Employee[]) => {
         setEmployees(data);
-        // Initialise batch rows
         setBatchRows(
           data.map((emp) => ({
             employeeId: emp.id,
             employeeName: emp.name,
             costCenter: emp.costCenter,
+            comment: "",
             ...EMPTY_KPI,
           }))
         );
       })
-      .catch(() => setErrorMessage("Mitarbeiter konnten nicht geladen werden."))
+      .catch(() => toast.error("Mitarbeiter konnten nicht geladen werden."))
       .finally(() => setLoadingEmployees(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status]);
 
   // -----------------------------------------------------------------------
-  // Load existing KPI entry when employee + date change (single mode)
+  // Check missing weeks
+  // -----------------------------------------------------------------------
+
+  useEffect(() => {
+    if (status !== "authenticated" || employees.length === 0) return;
+
+    const year = new Date().getFullYear();
+    const jan1 = new Date(year, 0, 1).toISOString();
+    const dec31 = new Date(year, 11, 31, 23, 59, 59).toISOString();
+    const params = new URLSearchParams({ from: jan1, to: dec31 });
+
+    fetch(`/api/kpi?${params}`)
+      .then((r) => r.json())
+      .then((entries: Array<{ employeeId: string; date: string }>) => {
+        const maxWeek = currentISOWeek() - 1;
+        if (maxWeek < 1) {
+          setMissingWeeks([]);
+          return;
+        }
+
+        const entryWeeksByEmployee = new Map<string, Set<number>>();
+        for (const entry of entries) {
+          const d = new Date(entry.date);
+          const mondayStr = localISO(d);
+          const kw = getISOWeek(mondayStr);
+          if (!entryWeeksByEmployee.has(entry.employeeId)) {
+            entryWeeksByEmployee.set(entry.employeeId, new Set());
+          }
+          entryWeeksByEmployee.get(entry.employeeId)!.add(kw);
+        }
+
+        const missing: MissingWeeksInfo[] = [];
+        for (const emp of employees) {
+          const existingWeeks = entryWeeksByEmployee.get(emp.id) || new Set();
+          const empMissing: number[] = [];
+          for (let kw = 1; kw <= maxWeek; kw++) {
+            if (!existingWeeks.has(kw)) empMissing.push(kw);
+          }
+          if (empMissing.length > 0) {
+            missing.push({ employeeName: emp.name, missingWeeks: empMissing });
+          }
+        }
+        setMissingWeeks(missing);
+      })
+      .catch(() => {});
+  }, [status, employees]);
+
+  // -----------------------------------------------------------------------
+  // Load existing KPI entry (single mode)
   // -----------------------------------------------------------------------
 
   const loadExistingEntry = useCallback(
@@ -178,12 +291,14 @@ export default function EingabePage() {
             }
           }
           setSingleValues(loaded);
+          setSingleComment(entry.comment || "");
         } else {
           setSingleValues({ ...EMPTY_KPI });
+          setSingleComment("");
         }
       } catch {
-        // Silently reset on error
         setSingleValues({ ...EMPTY_KPI });
+        setSingleComment("");
       } finally {
         setLoadingExisting(false);
       }
@@ -229,6 +344,7 @@ export default function EingabePage() {
               employeeId: emp.id,
               employeeName: emp.name,
               costCenter: emp.costCenter,
+              comment: (existing?.comment as string) || "",
               ...values,
             };
           })
@@ -250,15 +366,9 @@ export default function EingabePage() {
   // Submit handlers
   // -----------------------------------------------------------------------
 
-  const clearMessages = () => {
-    setSuccessMessage("");
-    setErrorMessage("");
-  };
-
   const handleSingleSubmit = async () => {
-    clearMessages();
     if (!selectedEmployeeId) {
-      setErrorMessage("Bitte w\u00e4hlen Sie einen Mitarbeiter aus.");
+      toast.error("Bitte wählen Sie einen Mitarbeiter aus.");
       return;
     }
     const employee = employees.find((e) => e.id === selectedEmployeeId);
@@ -273,29 +383,32 @@ export default function EingabePage() {
           employeeId: selectedEmployeeId,
           date,
           costCenter: employee.costCenter,
+          comment: singleComment || null,
           ...singleValues,
         }),
       });
-      if (!res.ok) throw new Error("Fehler beim Speichern");
-      setSuccessMessage(
-        `KPI-Daten f\u00fcr ${employee.name} am ${new Date(date).toLocaleDateString("de-DE")} gespeichert.`
+      if (!res.ok) {
+        const body = await res.json();
+        throw new Error(body.error || "Fehler beim Speichern");
+      }
+      toast.success(
+        `KPI-Daten für ${employee.name} (KW ${getISOWeek(date)}) gespeichert.`
       );
-    } catch {
-      setErrorMessage("Fehler beim Speichern der KPI-Daten.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Fehler beim Speichern der KPI-Daten.");
     } finally {
       setSubmitting(false);
     }
   };
 
   const handleBatchSubmit = async () => {
-    clearMessages();
-    // Only send rows where at least one KPI value > 0
     const payload = batchRows
       .filter((row) => ALL_KPI_KEYS.some((k) => row[k] > 0))
       .map((row) => ({
         employeeId: row.employeeId,
         date,
         costCenter: row.costCenter,
+        comment: row.comment || null,
         ...ALL_KPI_KEYS.reduce(
           (acc, k) => ({ ...acc, [k]: row[k] }),
           {} as KpiValues
@@ -303,9 +416,7 @@ export default function EingabePage() {
       }));
 
     if (payload.length === 0) {
-      setErrorMessage(
-        "Keine Daten zum Speichern. Bitte mindestens einen Wert eingeben."
-      );
+      toast.error("Keine Daten zum Speichern. Bitte mindestens einen Wert eingeben.");
       return;
     }
 
@@ -316,12 +427,15 @@ export default function EingabePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) throw new Error("Fehler beim Speichern");
-      setSuccessMessage(
-        `KPI-Daten f\u00fcr ${payload.length} Mitarbeiter am ${new Date(date).toLocaleDateString("de-DE")} gespeichert.`
+      if (!res.ok) {
+        const body = await res.json();
+        throw new Error(body.error || "Fehler beim Speichern");
+      }
+      toast.success(
+        `KPI-Daten für ${payload.length} Mitarbeiter (KW ${getISOWeek(date)}) gespeichert.`
       );
-    } catch {
-      setErrorMessage("Fehler beim Speichern der KPI-Daten.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Fehler beim Speichern der KPI-Daten.");
     } finally {
       setSubmitting(false);
     }
@@ -351,6 +465,14 @@ export default function EingabePage() {
     });
   };
 
+  const handleBatchCommentChange = (rowIdx: number, value: string) => {
+    setBatchRows((prev) => {
+      const next = [...prev];
+      next[rowIdx] = { ...next[rowIdx], comment: value };
+      return next;
+    });
+  };
+
   // -----------------------------------------------------------------------
   // Render guards
   // -----------------------------------------------------------------------
@@ -358,10 +480,6 @@ export default function EingabePage() {
   if (status === "loading" || status === "unauthenticated") {
     return <Loading text="Laden..." className="min-h-screen" />;
   }
-
-  // -----------------------------------------------------------------------
-  // Employee options for Select
-  // -----------------------------------------------------------------------
 
   const employeeOptions = employees.map((e) => ({
     value: e.id,
@@ -375,39 +493,16 @@ export default function EingabePage() {
   return (
     <AppShell pageTitle="KPI-Eingabe">
       <div className="max-w-7xl mx-auto space-y-6">
-        {/* ---- Success / Error banners ---- */}
-        {successMessage && (
-          <div className="bg-green-50 border border-green-300 text-green-800 px-4 py-3 rounded-lg text-sm flex items-center justify-between">
-            <span>{successMessage}</span>
-            <button
-              onClick={() => setSuccessMessage("")}
-              className="text-green-600 hover:text-green-800 font-bold ml-4"
-            >
-              &times;
-            </button>
-          </div>
-        )}
-        {errorMessage && (
-          <div className="bg-red-50 border border-red-300 text-red-800 px-4 py-3 rounded-lg text-sm flex items-center justify-between">
-            <span>{errorMessage}</span>
-            <button
-              onClick={() => setErrorMessage("")}
-              className="text-red-600 hover:text-red-800 font-bold ml-4"
-            >
-              &times;
-            </button>
-          </div>
-        )}
-
         {/* ---- Top controls: date + mode toggle ---- */}
         <Card>
           <div className="flex flex-wrap items-end gap-4">
+            {/* Date picker - week only */}
             <div className="w-56">
               <Input
-                label="Datum"
+                label={`KW ${getISOWeek(date)}: ${formatDE(date)} – ${formatDE(toSunday(date))}`}
                 type="date"
                 value={date}
-                onChange={(e) => setDate(e.target.value)}
+                onChange={(e) => handleDateChange(e.target.value)}
               />
             </div>
 
@@ -417,10 +512,7 @@ export default function EingabePage() {
                 type="button"
                 role="switch"
                 aria-checked={batchMode}
-                onClick={() => {
-                  clearMessages();
-                  setBatchMode((b) => !b);
-                }}
+                onClick={() => setBatchMode((b) => !b)}
                 className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
                   batchMode ? "bg-blue-600" : "bg-gray-200"
                 }`}
@@ -436,6 +528,42 @@ export default function EingabePage() {
           </div>
         </Card>
 
+        {/* ---- Missing weeks warning ---- */}
+        {missingWeeks.length > 0 && (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+            <div className="flex items-start gap-2">
+              <svg className="w-5 h-5 text-amber-500 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+              </svg>
+              <div>
+                <h4 className="text-sm font-semibold text-amber-800 mb-2">Fehlende Kalenderwochen</h4>
+                <div className="space-y-1.5">
+                  {missingWeeks.map((info) => (
+                    <div key={info.employeeName} className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-xs font-medium text-amber-900">{info.employeeName}:</span>
+                      {info.missingWeeks.slice(0, 15).map((kw) => (
+                        <button
+                          key={kw}
+                          onClick={() => {
+                            const monday = getMondayOfWeek(new Date().getFullYear(), kw);
+                            setDate(localISO(monday));
+                          }}
+                          className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-red-100 text-red-700 hover:bg-red-200 transition-colors cursor-pointer"
+                        >
+                          KW {kw}
+                        </button>
+                      ))}
+                      {info.missingWeeks.length > 15 && (
+                        <span className="text-[10px] text-amber-600">+{info.missingWeeks.length - 15} weitere</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {loadingEmployees ? (
           <Loading text="Mitarbeiter werden geladen..." />
         ) : !batchMode ? (
@@ -443,12 +571,11 @@ export default function EingabePage() {
              SINGLE ENTRY MODE
              ================================================================ */
           <div className="space-y-6">
-            {/* Employee selector */}
             <Card>
               <div className="max-w-md">
                 <Select
                   label="Mitarbeiter"
-                  placeholder="Mitarbeiter ausw\u00e4hlen..."
+                  placeholder="Mitarbeiter auswählen..."
                   options={employeeOptions}
                   value={selectedEmployeeId}
                   onChange={(e) => setSelectedEmployeeId(e.target.value)}
@@ -463,7 +590,6 @@ export default function EingabePage() {
 
             {selectedEmployeeId && !loadingExisting && (
               <>
-                {/* KPI sections */}
                 {KPI_FIELDS.map((section) => (
                   <Card key={section.section} title={section.section}>
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -488,7 +614,19 @@ export default function EingabePage() {
                   </Card>
                 ))}
 
-                {/* Submit button */}
+                {/* Comment field */}
+                <Card title="Kommentar">
+                  <textarea
+                    value={singleComment}
+                    onChange={(e) => setSingleComment(e.target.value)}
+                    placeholder="Optionaler Kommentar zur Kalenderwoche..."
+                    maxLength={500}
+                    rows={3}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400 resize-none"
+                  />
+                  <p className="text-[10px] text-gray-400 mt-1">{singleComment.length}/500</p>
+                </Card>
+
                 <div className="flex justify-end">
                   <Button
                     onClick={handleSingleSubmit}
@@ -517,7 +655,6 @@ export default function EingabePage() {
                       <th className="text-left py-3 px-2 font-semibold text-gray-500 min-w-[60px]">
                         KST
                       </th>
-                      {/* Section headers */}
                       {KPI_FIELDS.map((section) => (
                         <th
                           key={section.section}
@@ -527,6 +664,9 @@ export default function EingabePage() {
                           {section.section}
                         </th>
                       ))}
+                      <th className="text-center py-1 px-2 font-semibold text-gray-900 border-b border-gray-100 min-w-[120px]">
+                        Kommentar
+                      </th>
                     </tr>
                     <tr className="border-b border-gray-100">
                       <th className="sticky left-0 bg-white" />
@@ -541,6 +681,7 @@ export default function EingabePage() {
                           </th>
                         ))
                       )}
+                      <th />
                     </tr>
                   </thead>
                   <tbody>
@@ -569,6 +710,16 @@ export default function EingabePage() {
                             />
                           </td>
                         ))}
+                        <td className="py-1 px-1">
+                          <input
+                            type="text"
+                            value={row.comment}
+                            onChange={(e) => handleBatchCommentChange(idx, e.target.value)}
+                            placeholder="..."
+                            maxLength={500}
+                            className="w-28 border border-gray-200 rounded px-1 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400 focus:border-blue-400"
+                          />
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -576,7 +727,6 @@ export default function EingabePage() {
               </div>
             </Card>
 
-            {/* Submit button */}
             <div className="flex justify-end">
               <Button
                 onClick={handleBatchSubmit}

@@ -253,7 +253,7 @@ export default function MitarbeiterPage() {
                   <th className="px-6 py-3 font-medium text-gray-600">Kostenstelle</th>
                   <th className="px-6 py-3 font-medium text-gray-600">Status</th>
                   <th className="px-6 py-3 font-medium text-gray-600 text-right">
-                    Anzahl KPI-Eintr&auml;ge
+                    Anzahl KPI-Einträge
                   </th>
                   <th className="px-6 py-3 font-medium text-gray-600 text-right">Aktionen</th>
                 </tr>
