@@ -1,0 +1,54 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id       String @id @default(cuid())
+  email    String @unique
+  password String
+  name     String
+  role     String @default("admin")
+}
+
+model Employee {
+  id         String     @id @default(cuid())
+  name       String
+  email      String?
+  costCenter String
+  active     Boolean    @default(true)
+  createdAt  DateTime   @default(now())
+  kpiEntries KpiEntry[]
+}
+
+model KpiEntry {
+  id         String   @id @default(cuid())
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  date       DateTime
+  costCenter String
+
+  // Vertrieb
+  kundenbesuche          Int @default(0)
+  telefonate             Int @default(0)
+  auftraegeAkquiriert    Int @default(0)
+  auftraegeAbgeschlossen Int @default(0)
+
+  // Profile & Recruiting
+  profileVerschickt      Int @default(0)
+  vorstellungsgespraeche Int @default(0)
+  externeEinstellungen   Int @default(0)
+
+  // Personal
+  eintritte Int @default(0)
+  austritte Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([employeeId, date])
+}
