@@ -4,9 +4,10 @@ import { useSession } from "next-auth/react";
 
 interface HeaderProps {
   pageTitle: string;
+  onMenuClick?: () => void;
 }
 
-export default function Header({ pageTitle }: HeaderProps) {
+export default function Header({ pageTitle, onMenuClick }: HeaderProps) {
   const { data: session } = useSession();
 
   const userInitials = session?.user?.name
@@ -20,7 +21,20 @@ export default function Header({ pageTitle }: HeaderProps) {
 
   return (
     <header className="sticky top-0 z-30 flex h-12 items-center justify-between border-b border-gray-200/60 bg-white/80 backdrop-blur-xl px-5">
-      <h2 className="text-sm font-semibold text-gray-900">{pageTitle}</h2>
+      <div className="flex items-center gap-2">
+        {onMenuClick && (
+          <button
+            onClick={onMenuClick}
+            className="md:hidden p-1.5 -ml-1 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+            aria-label="Menü öffnen"
+          >
+            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth="2" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+            </svg>
+          </button>
+        )}
+        <h2 className="text-sm font-semibold text-gray-900">{pageTitle}</h2>
+      </div>
 
       <div className="flex items-center gap-2.5">
         {session?.user && (

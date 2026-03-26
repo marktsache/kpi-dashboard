@@ -35,15 +35,17 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     );
   }
 
-  const { name, email, costCenter, active } = parseResult.data;
+  const { name, costCenter, active, photoUrl, jobTitle, startDate } = parseResult.data;
 
   const employee = await prisma.employee.update({
     where: { id },
     data: {
       ...(name !== undefined && { name }),
-      ...(email !== undefined && { email }),
       ...(costCenter !== undefined && { costCenter }),
       ...(active !== undefined && { active }),
+      ...(photoUrl !== undefined && { photoUrl }),
+      ...(jobTitle !== undefined && { jobTitle }),
+      ...(startDate !== undefined && { startDate: startDate ? new Date(startDate) : null }),
     },
   });
 

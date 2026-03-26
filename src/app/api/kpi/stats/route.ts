@@ -35,33 +35,22 @@ export async function GET(request: NextRequest) {
   });
 
   const zero = {
-    kundenbesuche: 0, telefonate: 0,
-    auftraegeAkquiriert: 0, auftraegeAbgeschlossen: 0,
     profile: 0, vorstellungsgespraeche: 0, deals: 0,
     eintritte: 0, austritte: 0,
   };
 
   type ZeroType = typeof zero;
 
-  const addEntry = (acc: ZeroType, e: { kundenbesuche: number; telefonate: number; auftraegeAkquiriert: number; auftraegeAbgeschlossen: number; profile: number; vorstellungsgespraeche: number; deals: number; eintritte: number; austritte: number }) => ({
-    kundenbesuche: acc.kundenbesuche + e.kundenbesuche,
-    telefonate: acc.telefonate + e.telefonate,
-    auftraegeAkquiriert: acc.auftraegeAkquiriert + e.auftraegeAkquiriert,
-    auftraegeAbgeschlossen: acc.auftraegeAbgeschlossen + e.auftraegeAbgeschlossen,
-    profile: acc.profile + e.profile,
-    vorstellungsgespraeche: acc.vorstellungsgespraeche + e.vorstellungsgespraeche,
-    deals: acc.deals + e.deals,
-    eintritte: acc.eintritte + e.eintritte,
-    austritte: acc.austritte + e.austritte,
+  const addEntry = (acc: ZeroType, e: { profile: number | null; vorstellungsgespraeche: number | null; deals: number | null; eintritte: number | null; austritte: number | null }) => ({
+    profile: acc.profile + (e.profile ?? 0),
+    vorstellungsgespraeche: acc.vorstellungsgespraeche + (e.vorstellungsgespraeche ?? 0),
+    deals: acc.deals + (e.deals ?? 0),
+    eintritte: acc.eintritte + (e.eintritte ?? 0),
+    austritte: acc.austritte + (e.austritte ?? 0),
   });
 
   const totals = entries.reduce((acc, e) => addEntry(acc, e), { ...zero });
 
-  const kontakte = totals.kundenbesuche + totals.telefonate;
-  const hitRate = totals.auftraegeAkquiriert > 0
-    ? Math.round((totals.auftraegeAbgeschlossen / totals.auftraegeAkquiriert) * 100) : 0;
-  const conversionRate = kontakte > 0
-    ? Math.round((totals.auftraegeAbgeschlossen / kontakte) * 100) : 0;
   const dealQuote = totals.profile > 0
     ? Math.round((totals.deals / totals.profile) * 1000) / 10 : 0;
   const maWachstum = totals.eintritte - totals.austritte;
@@ -159,19 +148,11 @@ export async function GET(request: NextRequest) {
     });
 
     previousTotals = prevEntries.reduce((acc, e) => addEntry(acc, e), { ...zero });
-    const prevKontakte = previousTotals.kundenbesuche + previousTotals.telefonate;
-    const prevHitRate = previousTotals.auftraegeAkquiriert > 0
-      ? Math.round((previousTotals.auftraegeAbgeschlossen / previousTotals.auftraegeAkquiriert) * 100) : 0;
-    const prevConversionRate = prevKontakte > 0
-      ? Math.round((previousTotals.auftraegeAbgeschlossen / prevKontakte) * 100) : 0;
     const prevDealQuote = previousTotals.profile > 0
       ? Math.round((previousTotals.deals / previousTotals.profile) * 1000) / 10 : 0;
     const prevMaWachstum = previousTotals.eintritte - previousTotals.austritte;
 
     previousComputed = {
-      kontakte: prevKontakte,
-      hitRate: prevHitRate,
-      conversionRate: prevConversionRate,
       dealQuote: prevDealQuote,
       maWachstum: prevMaWachstum,
     };
@@ -179,7 +160,7 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json({
     totals,
-    computed: { kontakte, hitRate, conversionRate, dealQuote, maWachstum },
+    computed: { dealQuote, maWachstum },
     trends,
     costCenterBreakdown,
     yearComparison,

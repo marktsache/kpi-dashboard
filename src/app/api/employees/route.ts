@@ -36,13 +36,18 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { name, email, costCenter } = parseResult.data;
+  const { name, costCenter, jobTitle, startDate } = parseResult.data;
 
   const employee = await prisma.employee.create({
-    data: { name, email: email || null, costCenter },
+    data: {
+      name,
+      costCenter,
+      ...(jobTitle && { jobTitle }),
+      ...(startDate && { startDate: new Date(startDate) }),
+    },
   });
 
-  logAudit({ userId, action: "create", entityType: "Employee", entityId: employee.id, changes: { name, email, costCenter } });
+  logAudit({ userId, action: "create", entityType: "Employee", entityId: employee.id, changes: { name, costCenter, jobTitle, startDate } });
 
   return NextResponse.json(employee, { status: 201 });
 }

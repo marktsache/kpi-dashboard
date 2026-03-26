@@ -19,6 +19,10 @@ interface FilterState {
   customTo: string;
   viewMode: ViewMode;
   costCenter: string;
+  // Analyse-page state (persisted across navigation)
+  analyseTab: string;
+  selectedEmployee: string;
+  vergleichSelectedIds: string[];
 }
 
 interface FilterContextValue extends FilterState {
@@ -27,6 +31,9 @@ interface FilterContextValue extends FilterState {
   setCustomTo: (v: string) => void;
   setViewMode: (v: ViewMode) => void;
   setCostCenter: (v: string) => void;
+  setAnalyseTab: (v: string) => void;
+  setSelectedEmployee: (v: string) => void;
+  setVergleichSelectedIds: (v: string[]) => void;
   dateRange: { from: string; to: string };
 }
 
@@ -80,6 +87,9 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
   const [customTo, setCustomTo] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("month");
   const [costCenter, setCostCenter] = useState("all");
+  const [analyseTab, setAnalyseTab] = useState("trends");
+  const [selectedEmployee, setSelectedEmployee] = useState("all");
+  const [vergleichSelectedIds, setVergleichSelectedIds] = useState<string[]>([]);
 
   const dateRange = useMemo(() => {
     if (timeRange === "custom") return { from: customFrom, to: customTo };
@@ -92,11 +102,17 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
     customTo,
     viewMode,
     costCenter,
+    analyseTab,
+    selectedEmployee,
+    vergleichSelectedIds,
     setTimeRange,
     setCustomFrom,
     setCustomTo,
     setViewMode,
     setCostCenter,
+    setAnalyseTab,
+    setSelectedEmployee,
+    setVergleichSelectedIds,
     dateRange,
   };
 

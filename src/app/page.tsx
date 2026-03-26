@@ -3,806 +3,426 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { AppShell } from "@/components/layout/app-shell";
-import { StatCard } from "@/components/ui/stat-card";
-import { Loading } from "@/components/ui/loading";
-import { KpiLineChart } from "@/components/charts/line-chart";
-import { KpiBarChart } from "@/components/charts/bar-chart";
-import { FunnelChart } from "@/components/charts/funnel-chart";
-import { KpiPieChart } from "@/components/charts/pie-chart";
-import { Button } from "@/components/ui/button";
+import { DashboardSkeleton } from "@/components/ui/skeleton";
+import { EmptyState } from "@/components/ui/empty-state";
 import { useFilters, TIME_RANGE_LABELS } from "@/lib/filter-context";
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-interface Employee {
-  id: string;
-  name: string;
-  costCenter: string;
-  active: boolean;
-}
+import { useKpiEntry } from "@/lib/kpi-entry-context";
+import { Badge, kstColor } from "@/components/ui/badge";
 
 interface KpiEntry {
   id: string;
   employeeId: string;
   date: string;
-  costCenter: string;
-  telefonate: number;
-  auftraegeAkquiriert: number;
-  auftraegeAbgeschlossen: number;
   profile: number;
   vorstellungsgespraeche: number;
   deals: number;
   eintritte: number;
   austritte: number;
-  employee: { name: string; costCenter: string };
-}
-
-interface Stats {
-  totals: Record<string, number>;
-  computed: {
-    kontakte: number;
-    hitRate: number;
-    conversionRate: number;
-    dealQuote: number;
-    maWachstum: number;
+  employee: {
+    id: string;
+    name: string;
+    costCenter: string;
   };
-  trends: Array<Record<string, unknown>>;
-  costCenterBreakdown: Array<Record<string, string | number>>;
-  yearComparison: Array<Record<string, string | number>>;
-  years: string[];
-  entryCount: number;
-  previousTotals: Record<string, number> | null;
-  previousComputed: {
-    kontakte: number;
-    hitRate: number;
-    conversionRate: number;
-    dealQuote: number;
-    maWachstum: number;
-  } | null;
 }
 
-const KPI_FIELDS = [
-  { key: "telefonate", label: "Telefonate" },
-  { key: "auftraegeAkquiriert", label: "Aufträge akquiriert" },
-  { key: "auftraegeAbgeschlossen", label: "Aufträge abgeschlossen" },
+interface EmployeeRow {
+  employeeId: string;
+  name: string;
+  costCenter: string;
+  profile: number;
+  vorstellungsgespraeche: number;
+  deals: number;
+  vgQuote: number;
+  dealQuote: number;
+  eintritte: number;
+  austritte: number;
+  maWachstum: number;
+}
+
+interface MissingMonthDetail {
+  employeeId: string;
+  employeeName: string;
+  missingMonths: Array<{ month: number; label: string }>;
+}
+
+const KPI_RANKING_METRICS = [
   { key: "profile", label: "Profile" },
   { key: "vorstellungsgespraeche", label: "VG's" },
   { key: "deals", label: "Deals" },
   { key: "eintritte", label: "Eintritte" },
-  { key: "austritte", label: "Austritte" },
 ] as const;
 
-const YEAR_COLORS: Record<number, string> = {
-  0: "#94a3b8", 1: "#3b82f6", 2: "#10b981", 3: "#f59e0b", 4: "#8b5cf6", 5: "#ef4444",
-};
-
-const COST_CENTER_COLORS: Record<string, string> = {
-  "330": "#2563eb", "350": "#059669", "370": "#dc2626",
-};
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function pctChange(current: number, previous: number): number | undefined {
-  if (previous === 0) return current > 0 ? 100 : undefined;
-  return Math.round(((current - previous) / previous) * 100);
+function fmt(n: number): string {
+  return n.toLocaleString("de-DE");
 }
 
-function formatDE(d: string): string {
-  return new Date(d).toLocaleDateString("de-DE");
+function fmtPct(n: number): string {
+  return n.toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + "%";
 }
-
-function buildCsvContent(entries: KpiEntry[]): string {
-  const headers = [
-    "Datum", "Mitarbeiter", "Kostenstelle",
-    "Telefonate", "Aufträge akquiriert", "Aufträge abgeschlossen",
-    "Profile", "VG's", "Deals", "Eintritte", "Austritte",
-  ];
-  const rows = entries.map((entry) => [
-    new Date(entry.date).toLocaleDateString("de-DE"),
-    entry.employee?.name ?? "", entry.costCenter,
-    entry.telefonate, entry.auftraegeAkquiriert, entry.auftraegeAbgeschlossen,
-    entry.profile, entry.vorstellungsgespraeche, entry.deals, entry.eintritte, entry.austritte,
-  ]);
-  const csvLines = [
-    headers.join(";"),
-    ...rows.map((row) => row.map((cell) => {
-      const str = String(cell);
-      if (str.includes(";") || str.includes('"') || str.includes("\n")) return `"${str.replace(/"/g, '""')}"`;
-      return str;
-    }).join(";")),
-  ];
-  return "\uFEFF" + csvLines.join("\r\n");
-}
-
-function downloadCsv(content: string, filename: string): void {
-  const blob = new Blob([content], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
-}
-
-// ---------------------------------------------------------------------------
-// Section wrapper
-// ---------------------------------------------------------------------------
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-3">
-        <h2 className="text-sm font-bold text-gray-800 uppercase tracking-wide">{title}</h2>
-        <div className="flex-1 h-px bg-gray-200" />
-      </div>
-      {children}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
 
 export default function DashboardPage() {
   const { status } = useSession();
   const router = useRouter();
-  const filters = useFilters();
-  const {
-    timeRange, setTimeRange,
-    customFrom, setCustomFrom, customTo, setCustomTo,
-    viewMode, setViewMode,
-    costCenter, setCostCenter,
-    dateRange,
-  } = filters;
+  const { timeRange, setTimeRange, costCenter, setCostCenter, dateRange } = useFilters();
+  const { openKpiEntry } = useKpiEntry();
 
-  const [stats, setStats] = useState<Stats | null>(null);
-  const [rawData, setRawData] = useState<KpiEntry[]>([]);
-  const [employees, setEmployees] = useState<Employee[]>([]);
-  const [selectedEmployee, setSelectedEmployee] = useState("all");
+  const [entries, setEntries] = useState<KpiEntry[]>([]);
   const [loading, setLoading] = useState(true);
-  const [exporting, setExporting] = useState(false);
-  const [yearCompData, setYearCompData] = useState<Array<Record<string, string | number>>>([]);
-  const [yearCompYears, setYearCompYears] = useState<string[]>([]);
+  const [missingMonths, setMissingMonths] = useState<MissingMonthDetail[]>([]);
+  const [rankingMetric, setRankingMetric] = useState<string>("profile");
 
   useEffect(() => {
     if (status === "unauthenticated") router.push("/login");
   }, [status, router]);
 
-  useEffect(() => {
-    if (status !== "authenticated") return;
-    fetch("/api/employees?active=true").then((r) => r.json()).then(setEmployees);
-  }, [status]);
-
-  // Main data fetch
-  useEffect(() => {
-    if (status !== "authenticated") return;
-    if (!dateRange.from || !dateRange.to) return;
+  // Fetch KPI entries
+  const fetchData = useCallback(() => {
+    if (status !== "authenticated" || !dateRange.from || !dateRange.to) return;
     setLoading(true);
     const params = new URLSearchParams({
       from: new Date(dateRange.from + "T00:00:00").toISOString(),
       to: new Date(dateRange.to + "T23:59:59").toISOString(),
-      viewMode,
       ...(costCenter !== "all" && { costCenter }),
     });
-    Promise.all([
-      fetch(`/api/kpi/stats?${params}`).then((r) => r.json()),
-      fetch(`/api/kpi?${params}`).then((r) => r.json()),
-    ]).then(([statsData, rawEntries]) => {
-      setStats(statsData);
-      setRawData(rawEntries);
-    }).finally(() => setLoading(false));
-  }, [status, dateRange, costCenter, viewMode]);
+    fetch(`/api/kpi?${params}`)
+      .then((r) => r.json())
+      .then((data) => setEntries(data))
+      .finally(() => setLoading(false));
+  }, [status, dateRange, costCenter]);
 
-  // Year comparison fetch
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  // Fetch missing months
   useEffect(() => {
     if (status !== "authenticated") return;
-    const yearFrom = new Date();
-    yearFrom.setFullYear(yearFrom.getFullYear() - 5);
-    yearFrom.setMonth(0, 1);
-    const yearTo = new Date();
-    yearTo.setMonth(11, 31);
-    const params = new URLSearchParams({
-      from: yearFrom.toISOString(), to: yearTo.toISOString(),
-      viewMode: "month",
-      ...(costCenter !== "all" && { costCenter }),
-    });
-    fetch(`/api/kpi/stats?${params}`).then((r) => r.json()).then((data: Stats) => {
-      setYearCompData(data.yearComparison ?? []);
-      setYearCompYears(data.years ?? []);
-    }).catch(() => { setYearCompData([]); setYearCompYears([]); });
-  }, [status, costCenter]);
+    fetch("/api/kpi/missing-weeks")
+      .then((r) => r.json())
+      .then((data) => setMissingMonths(data.details || []))
+      .catch(() => setMissingMonths([]));
+  }, [status]);
 
-  // Employee-filtered entries
-  const employeeEntries = useMemo(() => {
-    if (selectedEmployee === "all") return rawData;
-    return rawData.filter((e) => e.employeeId === selectedEmployee);
-  }, [rawData, selectedEmployee]);
+  // Refresh on kpi-entry-saved event
+  useEffect(() => {
+    const handler = () => {
+      fetchData();
+      fetch("/api/kpi/missing-weeks")
+        .then((r) => r.json())
+        .then((data) => setMissingMonths(data.details || []))
+        .catch(() => {});
+    };
+    window.addEventListener("kpi-entry-saved", handler);
+    return () => window.removeEventListener("kpi-entry-saved", handler);
+  }, [fetchData]);
 
-  // Employee trends
-  const employeeTrends = useMemo(() => {
-    if (selectedEmployee === "all") return null;
-    const monthNames = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
-    function getISOWeek(d: Date): number {
-      const tmp = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-      tmp.setUTCDate(tmp.getUTCDate() + 4 - (tmp.getUTCDay() || 7));
-      const yearStart = new Date(Date.UTC(tmp.getUTCFullYear(), 0, 1));
-      return Math.ceil(((tmp.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
-    }
-    const zeroRow = () => Object.fromEntries(KPI_FIELDS.map((f) => [f.key, 0])) as Record<string, number>;
-    if (viewMode === "month") {
-      const buckets = Array.from({ length: 12 }, () => zeroRow());
-      for (const entry of employeeEntries) {
-        const m = new Date(entry.date).getMonth();
-        for (const field of KPI_FIELDS) buckets[m][field.key] += entry[field.key];
-      }
-      return buckets.map((data, i) => ({ label: monthNames[i], ...data }));
-    } else {
-      const buckets = Array.from({ length: 52 }, () => zeroRow());
-      for (const entry of employeeEntries) {
-        const kw = getISOWeek(new Date(entry.date));
-        const idx = Math.min(kw - 1, 51);
-        for (const field of KPI_FIELDS) buckets[idx][field.key] += entry[field.key];
-      }
-      return buckets.map((data, i) => ({ label: `KW ${i + 1}`, ...data }));
-    }
-  }, [selectedEmployee, employeeEntries, viewMode]);
-
-  // Totals for employee-filtered view
-  const filteredTotals = useMemo(() => {
-    const t: Record<string, number> = {};
-    for (const field of KPI_FIELDS) t[field.key] = 0;
-    for (const entry of employeeEntries) {
-      for (const field of KPI_FIELDS) t[field.key] += entry[field.key];
-    }
-    return t;
-  }, [employeeEntries]);
-
-  // Pie chart data
-  const costCenterPieData = useMemo(() => {
-    const byCostCenter = new Map<string, number>();
-    for (const entry of rawData) {
-      const cc = entry.costCenter;
-      const total = entry.telefonate + entry.auftraegeAkquiriert + entry.auftraegeAbgeschlossen;
-      byCostCenter.set(cc, (byCostCenter.get(cc) || 0) + total);
-    }
-    return Array.from(byCostCenter.entries()).map(([cc, value]) => ({
-      name: `KST ${cc}`, value, color: COST_CENTER_COLORS[cc] || "#6b7280",
-    })).sort((a, b) => a.name.localeCompare(b.name));
-  }, [rawData]);
-
-  const profilePieData = useMemo(() => {
-    const byCostCenter = new Map<string, number>();
-    for (const entry of rawData) {
-      const cc = entry.costCenter;
-      const total = entry.profile + entry.vorstellungsgespraeche + entry.deals;
-      byCostCenter.set(cc, (byCostCenter.get(cc) || 0) + total);
-    }
-    return Array.from(byCostCenter.entries()).map(([cc, value]) => ({
-      name: `KST ${cc}`, value, color: COST_CENTER_COLORS[cc] || "#6b7280",
-    })).sort((a, b) => a.name.localeCompare(b.name));
-  }, [rawData]);
-
-  // Monthly breakdown for table (from rawData, respects all filters)
-  const monthlyBreakdown = useMemo(() => {
-    const monthNames = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
-    const buckets = Array.from({ length: 12 }, () => ({
-      profile: 0, vorstellungsgespraeche: 0, deals: 0, eintritte: 0, austritte: 0,
-    }));
-    for (const entry of employeeEntries) {
-      const m = new Date(entry.date).getMonth();
-      buckets[m].profile += entry.profile;
-      buckets[m].vorstellungsgespraeche += entry.vorstellungsgespraeche;
-      buckets[m].deals += entry.deals;
-      buckets[m].eintritte += entry.eintritte;
-      buckets[m].austritte += entry.austritte;
-    }
-    return buckets
-      .map((b, i) => ({
-        label: monthNames[i],
-        ...b,
-        vgQuote: b.profile > 0 ? Math.round((b.vorstellungsgespraeche / b.profile) * 1000) / 10 : 0,
-        dealQuote: b.profile > 0 ? Math.round((b.deals / b.profile) * 1000) / 10 : 0,
-        maWachstum: b.eintritte - b.austritte,
-      }))
-      .filter((b) => b.profile > 0 || b.vorstellungsgespraeche > 0 || b.deals > 0 || b.eintritte > 0 || b.austritte > 0);
-  }, [employeeEntries]);
-
-  // Yearly totals from yearCompData
-  const yearlyOverview = useMemo(() => {
-    if (!yearCompYears.length || !yearCompData.length) return [];
-    return yearCompYears.map((year) => {
-      let profile = 0, vg = 0, deals = 0, eintritte = 0, austritte = 0;
-      for (const row of yearCompData) {
-        profile += (row[`profile_${year}`] as number) || 0;
-        vg += (row[`vorstellungsgespraeche_${year}`] as number) || 0;
-        deals += (row[`deals_${year}`] as number) || 0;
-        eintritte += (row[`eintritte_${year}`] as number) || 0;
-        austritte += (row[`austritte_${year}`] as number) || 0;
-      }
-      return {
-        label: year,
-        profile, vorstellungsgespraeche: vg, deals, eintritte, austritte,
-        vgQuote: profile > 0 ? Math.round((vg / profile) * 1000) / 10 : 0,
-        dealQuote: profile > 0 ? Math.round((deals / profile) * 1000) / 10 : 0,
-        maWachstum: eintritte - austritte,
+  // Aggregate entries by employee
+  const employeeRows = useMemo<EmployeeRow[]>(() => {
+    const byEmployee = new Map<string, { name: string; costCenter: string; profile: number; vg: number; deals: number; eintritte: number; austritte: number }>();
+    for (const entry of entries) {
+      const emp = byEmployee.get(entry.employeeId) || {
+        name: entry.employee?.name || "Unbekannt",
+        costCenter: entry.employee?.costCenter || "–",
+        profile: 0,
+        vg: 0,
+        deals: 0,
+        eintritte: 0,
+        austritte: 0,
       };
-    });
-  }, [yearCompData, yearCompYears]);
-
-  const handleExport = useCallback(async () => {
-    if (!dateRange.from || !dateRange.to) return;
-    setExporting(true);
-    try {
-      const params = new URLSearchParams({
-        from: new Date(dateRange.from + "T00:00:00").toISOString(),
-        to: new Date(dateRange.to + "T23:59:59").toISOString(),
-        ...(costCenter !== "all" && { costCenter }),
-      });
-      const res = await fetch(`/api/kpi?${params}`);
-      const entries: KpiEntry[] = await res.json();
-      const csv = buildCsvContent(entries);
-      downloadCsv(csv, `KPI-Export_${new Date().toISOString().split("T")[0]}.csv`);
-    } finally {
-      setExporting(false);
+      emp.profile += entry.profile || 0;
+      emp.vg += entry.vorstellungsgespraeche || 0;
+      emp.deals += entry.deals || 0;
+      emp.eintritte += entry.eintritte || 0;
+      emp.austritte += entry.austritte || 0;
+      byEmployee.set(entry.employeeId, emp);
     }
-  }, [dateRange, costCenter]);
+    return Array.from(byEmployee.entries()).map(([employeeId, d]) => ({
+      employeeId,
+      name: d.name,
+      costCenter: d.costCenter,
+      profile: d.profile,
+      vorstellungsgespraeche: d.vg,
+      deals: d.deals,
+      vgQuote: d.profile > 0 ? (d.vg / d.profile) * 100 : 0,
+      dealQuote: d.profile > 0 ? (d.deals / d.profile) * 100 : 0,
+      eintritte: d.eintritte,
+      austritte: d.austritte,
+      maWachstum: d.eintritte - d.austritte,
+    }));
+  }, [entries]);
+
+  // Averages
+  const averages = useMemo(() => {
+    const n = employeeRows.length;
+    if (n === 0) return null;
+    const sum = (fn: (r: EmployeeRow) => number) => employeeRows.reduce((s, r) => s + fn(r), 0);
+    const totalProfile = sum((r) => r.profile);
+    const totalVg = sum((r) => r.vorstellungsgespraeche);
+    const totalDeals = sum((r) => r.deals);
+    return {
+      profile: totalProfile / n,
+      vorstellungsgespraeche: totalVg / n,
+      deals: totalDeals / n,
+      vgQuote: totalProfile > 0 ? (totalVg / totalProfile) * 100 : 0,
+      dealQuote: totalProfile > 0 ? (totalDeals / totalProfile) * 100 : 0,
+      eintritte: sum((r) => r.eintritte) / n,
+      austritte: sum((r) => r.austritte) / n,
+      maWachstum: sum((r) => r.maWachstum) / n,
+    };
+  }, [employeeRows]);
+
+  // Totals
+  const totals = useMemo(() => {
+    const sum = (fn: (r: EmployeeRow) => number) => employeeRows.reduce((s, r) => s + fn(r), 0);
+    const totalProfile = sum((r) => r.profile);
+    const totalVg = sum((r) => r.vorstellungsgespraeche);
+    const totalDeals = sum((r) => r.deals);
+    return {
+      profile: totalProfile,
+      vorstellungsgespraeche: totalVg,
+      deals: totalDeals,
+      vgQuote: totalProfile > 0 ? (totalVg / totalProfile) * 100 : 0,
+      dealQuote: totalProfile > 0 ? (totalDeals / totalProfile) * 100 : 0,
+      eintritte: sum((r) => r.eintritte),
+      austritte: sum((r) => r.austritte),
+      maWachstum: sum((r) => r.eintritte) - sum((r) => r.austritte),
+    };
+  }, [employeeRows]);
+
+  // Ranking data
+  const rankingData = useMemo(() => {
+    return employeeRows
+      .map((r) => ({
+        name: r.name,
+        value: r[rankingMetric as keyof EmployeeRow] as number,
+      }))
+      .sort((a, b) => b.value - a.value);
+  }, [employeeRows, rankingMetric]);
 
   if (status === "loading" || status === "unauthenticated") {
-    return <Loading text="Laden..." />;
+    return <AppShell pageTitle="Dashboard"><DashboardSkeleton /></AppShell>;
   }
 
-  // Decide which data to use for charts
-  const trendData = employeeTrends ?? (stats?.trends ?? []);
-  const t = selectedEmployee === "all" && stats ? stats.totals : filteredTotals;
-  const prev = selectedEmployee === "all" ? stats?.previousTotals : null;
-  const comp = selectedEmployee === "all" ? stats?.computed : null;
-  const prevComp = selectedEmployee === "all" ? stats?.previousComputed : null;
+  const selectClass = "bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 text-[11px] font-medium shadow-card focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 outline-none text-gray-600";
 
-  // Computed values for filtered view
-  const dealQuote = t.profile > 0 ? Math.round((t.deals / t.profile) * 1000) / 10 : 0;
-  const hitRate = t.auftraegeAkquiriert > 0
-    ? Math.round((t.auftraegeAbgeschlossen / t.auftraegeAkquiriert) * 100) : 0;
-  const conversionRate = t.telefonate > 0
-    ? Math.round((t.auftraegeAbgeschlossen / t.telefonate) * 100) : 0;
-  const maWachstum = t.eintritte - t.austritte;
+  const maxRankingValue = rankingData.length > 0 ? Math.max(...rankingData.map((r) => r.value), 1) : 1;
+
+  const totalMissingCount = missingMonths.reduce((sum, d) => sum + d.missingMonths.length, 0);
+
+  // Helper: color class for above/below average
+  function aboveAvgClass(value: number, avg: number | undefined): string {
+    if (avg === undefined || avg === 0) return "text-gray-900";
+    if (value > avg) return "text-emerald-600 font-semibold";
+    if (value < avg) return "text-red-500 font-semibold";
+    return "text-gray-900";
+  }
+
+  function wachstumClass(value: number): string {
+    if (value > 0) return "text-emerald-600 font-semibold";
+    if (value < 0) return "text-red-500 font-semibold";
+    return "text-gray-900";
+  }
 
   return (
-    <AppShell pageTitle="Analyse">
-      {/* ── Filters ────────────────────────────────────────────── */}
+    <AppShell pageTitle="Dashboard">
+      {/* Filter Bar */}
       <div className="flex flex-wrap items-center gap-2 mb-6">
-        <select
-          value={timeRange}
-          onChange={(e) => setTimeRange(e.target.value as typeof timeRange)}
-          className="bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 text-[11px] font-medium shadow-card focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 outline-none text-gray-600"
-        >
+        <select value={timeRange} onChange={(e) => setTimeRange(e.target.value as typeof timeRange)} className={selectClass}>
           {Object.entries(TIME_RANGE_LABELS).map(([key, label]) => (
             <option key={key} value={key}>{label}</option>
           ))}
         </select>
-
-        {timeRange === "custom" && (
-          <div className="flex items-center gap-1.5">
-            <input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)}
-              className="bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-[11px] font-medium shadow-card focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 outline-none text-gray-600" />
-            <span className="text-[11px] text-gray-400">bis</span>
-            <input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)}
-              className="bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-[11px] font-medium shadow-card focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 outline-none text-gray-600" />
-          </div>
-        )}
-
-        {/* Date range badge - always visible */}
-        {dateRange.from && dateRange.to && (
-          <span className="inline-flex items-center gap-1 bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-1.5 text-[11px] font-medium text-gray-500">
-            <svg className="w-3 h-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-            </svg>
-            {formatDE(dateRange.from)} – {formatDE(dateRange.to)}
-          </span>
-        )}
-
-        <div className="flex bg-white rounded-lg border border-gray-200 shadow-card overflow-hidden">
-          {(["week", "month"] as const).map((vm) => (
-            <button
-              key={vm}
-              onClick={() => setViewMode(vm)}
-              className={`px-3 py-1.5 text-[11px] font-semibold transition-all ${
-                viewMode === vm
-                  ? "bg-navy-800 text-white"
-                  : "text-gray-500 hover:text-gray-700 hover:bg-gray-50"
-              }`}
-            >
-              {vm === "week" ? "je Woche" : "je Monat"}
-            </button>
-          ))}
-        </div>
-
-        <select
-          value={costCenter}
-          onChange={(e) => setCostCenter(e.target.value)}
-          className="bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 text-[11px] font-medium shadow-card focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 outline-none text-gray-600"
-        >
+        <select value={costCenter} onChange={(e) => setCostCenter(e.target.value)} className={selectClass}>
           <option value="all">Alle Kostenstellen</option>
           <option value="330">KST 330</option>
           <option value="350">KST 350</option>
           <option value="370">KST 370</option>
         </select>
-
-        <select
-          value={selectedEmployee}
-          onChange={(e) => setSelectedEmployee(e.target.value)}
-          className="bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 text-[11px] font-medium shadow-card focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 outline-none text-gray-600"
+        <button
+          onClick={() => openKpiEntry()}
+          className="ml-auto bg-gradient-to-r from-blue-500 to-blue-600 text-white text-[11px] font-semibold px-3.5 py-1.5 rounded-lg shadow-card hover:shadow-card-hover transition-all duration-200 flex items-center gap-1.5"
         >
-          <option value="all">Alle Mitarbeiter</option>
-          {employees.map((emp) => (
-            <option key={emp.id} value={emp.id}>{emp.name} (KST {emp.costCenter})</option>
-          ))}
-        </select>
-
-        <div className="ml-auto flex items-center gap-2">
-          {stats && (
-            <span className="text-[10px] text-gray-300">
-              {stats.entryCount} Einträge
-            </span>
-          )}
-          <Button variant="secondary" onClick={handleExport} loading={exporting} disabled={exporting}>
-            <svg className="w-3.5 h-3.5 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
-            CSV
-          </Button>
-        </div>
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" strokeWidth="2" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+          </svg>
+          KPI erfassen
+        </button>
       </div>
 
       {loading ? (
-        <Loading text="Daten werden geladen..." />
-      ) : stats ? (
-        <div className="space-y-8">
-
-          {/* ══════════════════════════════════════════════════════
-              PROFILE SECTION
-              ══════════════════════════════════════════════════════ */}
-          <Section title="Profile">
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-              <StatCard
-                title="Profile"
-                value={t.profile}
-                change={prev ? pctChange(t.profile, prev.profile ?? 0) : undefined}
-                accent="from-blue-400 to-cyan-500"
-              />
-              <StatCard
-                title="VG's"
-                value={t.vorstellungsgespraeche}
-                change={prev ? pctChange(t.vorstellungsgespraeche, prev.vorstellungsgespraeche ?? 0) : undefined}
-                accent="from-indigo-400 to-indigo-500"
-              />
-              <StatCard
-                title="Deals"
-                value={t.deals}
-                change={prev ? pctChange(t.deals, prev.deals ?? 0) : undefined}
-                accent="from-teal-500 to-teal-600"
-              />
-              <StatCard
-                title="Deal-Quote"
-                value={`${comp?.dealQuote ?? dealQuote}%`}
-                change={prevComp ? pctChange(comp?.dealQuote ?? dealQuote, prevComp.dealQuote) : undefined}
-                accent="from-amber-500 to-amber-600"
-              />
-            </div>
-
-            <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-card">
-              <h3 className="text-xs font-semibold text-gray-700 mb-3">Profile - Trend</h3>
-              <KpiLineChart
-                data={trendData as Record<string, unknown>[]}
-                xKey="label"
-                lines={[
-                  { key: "profile", color: "#3b82f6", name: "Profile" },
-                  { key: "vorstellungsgespraeche", color: "#8b5cf6", name: "VG" },
-                  { key: "deals", color: "#10b981", name: "Deals" },
-                ]}
-                height={280}
-              />
-            </div>
-
-            <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-card">
-              <h3 className="text-xs font-semibold text-gray-700 mb-3">Profile-Funnel</h3>
-              <FunnelChart
-                steps={[
-                  { label: "Profile", value: t.profile, color: "#3b82f6" },
-                  { label: "VG's", value: t.vorstellungsgespraeche, color: "#8b5cf6" },
-                  { label: "Deals", value: t.deals, color: "#10b981" },
-                ]}
-              />
-            </div>
-
-            {/* Monatsübersicht */}
-            {monthlyBreakdown.length > 0 && (
-              <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-card">
-                <h3 className="text-xs font-semibold text-gray-700 mb-3">Monatsübersicht</h3>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-gray-200">
-                        <th className="text-left py-2 px-3 font-semibold text-gray-700">Monat</th>
-                        <th className="text-right py-2 px-3 font-semibold text-gray-700">Profile</th>
-                        <th className="text-right py-2 px-3 font-semibold text-gray-700">VG&apos;s</th>
-                        <th className="text-right py-2 px-3 font-semibold text-gray-700">Deals</th>
-                        <th className="text-right py-2 px-3 font-semibold text-gray-700">VG-Quote</th>
-                        <th className="text-right py-2 px-3 font-semibold text-gray-700">Deal-Quote</th>
-                        <th className="text-right py-2 px-3 font-semibold text-gray-700">MA-Wachstum</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {monthlyBreakdown.map((row) => (
-                        <tr key={row.label} className="border-b border-gray-50 hover:bg-gray-50/50">
-                          <td className="py-2 px-3 font-medium text-gray-700">{row.label}</td>
-                          <td className="text-right py-2 px-3 tabular-nums">{row.profile.toLocaleString("de-DE")}</td>
-                          <td className="text-right py-2 px-3 tabular-nums">{row.vorstellungsgespraeche.toLocaleString("de-DE")}</td>
-                          <td className="text-right py-2 px-3 tabular-nums">{row.deals.toLocaleString("de-DE")}</td>
-                          <td className="text-right py-2 px-3 tabular-nums text-gray-500">{row.vgQuote}%</td>
-                          <td className="text-right py-2 px-3 tabular-nums text-gray-500">{row.dealQuote}%</td>
-                          <td className={`text-right py-2 px-3 tabular-nums font-semibold ${row.maWachstum > 0 ? "text-emerald-600" : row.maWachstum < 0 ? "text-red-600" : "text-gray-400"}`}>
-                            {row.maWachstum > 0 ? "+" : ""}{row.maWachstum}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot>
-                      <tr className="border-t-2 border-gray-200 bg-gray-50/50 font-semibold">
-                        <td className="py-2 px-3 text-gray-900">Gesamt</td>
-                        <td className="text-right py-2 px-3 tabular-nums text-gray-900">{monthlyBreakdown.reduce((s, r) => s + r.profile, 0).toLocaleString("de-DE")}</td>
-                        <td className="text-right py-2 px-3 tabular-nums text-gray-900">{monthlyBreakdown.reduce((s, r) => s + r.vorstellungsgespraeche, 0).toLocaleString("de-DE")}</td>
-                        <td className="text-right py-2 px-3 tabular-nums text-gray-900">{monthlyBreakdown.reduce((s, r) => s + r.deals, 0).toLocaleString("de-DE")}</td>
-                        {(() => {
-                          const tp = monthlyBreakdown.reduce((s, r) => s + r.profile, 0);
-                          const tv = monthlyBreakdown.reduce((s, r) => s + r.vorstellungsgespraeche, 0);
-                          const td = monthlyBreakdown.reduce((s, r) => s + r.deals, 0);
-                          const te = monthlyBreakdown.reduce((s, r) => s + r.eintritte, 0);
-                          const ta = monthlyBreakdown.reduce((s, r) => s + r.austritte, 0);
-                          const tg = te - ta;
-                          return (
-                            <>
-                              <td className="text-right py-2 px-3 tabular-nums text-gray-600">{tp > 0 ? Math.round((tv / tp) * 1000) / 10 : 0}%</td>
-                              <td className="text-right py-2 px-3 tabular-nums text-gray-600">{tp > 0 ? Math.round((td / tp) * 1000) / 10 : 0}%</td>
-                              <td className={`text-right py-2 px-3 tabular-nums font-bold ${tg > 0 ? "text-emerald-600" : tg < 0 ? "text-red-600" : "text-gray-400"}`}>
-                                {tg > 0 ? "+" : ""}{tg}
-                              </td>
-                            </>
-                          );
-                        })()}
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            {/* Jahresübersicht */}
-            {yearlyOverview.length > 0 && (
-              <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-card">
-                <h3 className="text-xs font-semibold text-gray-700 mb-3">Jahresübersicht</h3>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-gray-200">
-                        <th className="text-left py-2 px-3 font-semibold text-gray-700">Jahr</th>
-                        <th className="text-right py-2 px-3 font-semibold text-gray-700">Profile</th>
-                        <th className="text-right py-2 px-3 font-semibold text-gray-700">VG&apos;s</th>
-                        <th className="text-right py-2 px-3 font-semibold text-gray-700">Deals</th>
-                        <th className="text-right py-2 px-3 font-semibold text-gray-700">VG-Quote</th>
-                        <th className="text-right py-2 px-3 font-semibold text-gray-700">Deal-Quote</th>
-                        <th className="text-right py-2 px-3 font-semibold text-gray-700">MA-Wachstum</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {yearlyOverview.map((row) => (
-                        <tr key={row.label} className="border-b border-gray-50 hover:bg-gray-50/50">
-                          <td className="py-2 px-3 font-medium text-gray-700">{row.label}</td>
-                          <td className="text-right py-2 px-3 tabular-nums">{row.profile.toLocaleString("de-DE")}</td>
-                          <td className="text-right py-2 px-3 tabular-nums">{row.vorstellungsgespraeche.toLocaleString("de-DE")}</td>
-                          <td className="text-right py-2 px-3 tabular-nums">{row.deals.toLocaleString("de-DE")}</td>
-                          <td className="text-right py-2 px-3 tabular-nums text-gray-500">{row.vgQuote}%</td>
-                          <td className="text-right py-2 px-3 tabular-nums text-gray-500">{row.dealQuote}%</td>
-                          <td className={`text-right py-2 px-3 tabular-nums font-semibold ${row.maWachstum > 0 ? "text-emerald-600" : row.maWachstum < 0 ? "text-red-600" : "text-gray-400"}`}>
-                            {row.maWachstum > 0 ? "+" : ""}{row.maWachstum}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot>
-                      <tr className="border-t-2 border-gray-200 bg-gray-50/50 font-semibold">
-                        <td className="py-2 px-3 text-gray-900">Gesamt</td>
-                        <td className="text-right py-2 px-3 tabular-nums text-gray-900">{yearlyOverview.reduce((s, r) => s + r.profile, 0).toLocaleString("de-DE")}</td>
-                        <td className="text-right py-2 px-3 tabular-nums text-gray-900">{yearlyOverview.reduce((s, r) => s + r.vorstellungsgespraeche, 0).toLocaleString("de-DE")}</td>
-                        <td className="text-right py-2 px-3 tabular-nums text-gray-900">{yearlyOverview.reduce((s, r) => s + r.deals, 0).toLocaleString("de-DE")}</td>
-                        {(() => {
-                          const tp = yearlyOverview.reduce((s, r) => s + r.profile, 0);
-                          const tv = yearlyOverview.reduce((s, r) => s + r.vorstellungsgespraeche, 0);
-                          const td = yearlyOverview.reduce((s, r) => s + r.deals, 0);
-                          const te = yearlyOverview.reduce((s, r) => s + r.eintritte, 0);
-                          const ta = yearlyOverview.reduce((s, r) => s + r.austritte, 0);
-                          const tg = te - ta;
-                          return (
-                            <>
-                              <td className="text-right py-2 px-3 tabular-nums text-gray-600">{tp > 0 ? Math.round((tv / tp) * 1000) / 10 : 0}%</td>
-                              <td className="text-right py-2 px-3 tabular-nums text-gray-600">{tp > 0 ? Math.round((td / tp) * 1000) / 10 : 0}%</td>
-                              <td className={`text-right py-2 px-3 tabular-nums font-bold ${tg > 0 ? "text-emerald-600" : tg < 0 ? "text-red-600" : "text-gray-400"}`}>
-                                {tg > 0 ? "+" : ""}{tg}
-                              </td>
-                            </>
-                          );
-                        })()}
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              </div>
-            )}
-          </Section>
-
-          {/* ══════════════════════════════════════════════════════
-              EINSTELLUNGEN SECTION
-              ══════════════════════════════════════════════════════ */}
-          <Section title="Einstellungen">
-            <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-              <StatCard
-                title="Eintritte"
-                value={t.eintritte}
-                change={prev ? pctChange(t.eintritte, prev.eintritte ?? 0) : undefined}
-                accent="from-emerald-500 to-emerald-600"
-              />
-              <StatCard
-                title="Austritte"
-                value={t.austritte}
-                change={prev ? pctChange(t.austritte, prev.austritte ?? 0) : undefined}
-                accent="from-rose-400 to-rose-500"
-              />
-              <StatCard
-                title="MA-Wachstum"
-                value={comp?.maWachstum ?? maWachstum}
-                trend={(comp?.maWachstum ?? maWachstum) >= 0 ? "up" : "down"}
-                subtitle={`${t.eintritte} Ein / ${t.austritte} Aus`}
-                accent="from-violet-500 to-violet-600"
-              />
-            </div>
-
-            <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-card">
-              <h3 className="text-xs font-semibold text-gray-700 mb-3">Einstellungen - Trend</h3>
-              <KpiLineChart
-                data={trendData as Record<string, unknown>[]}
-                xKey="label"
-                lines={[
-                  { key: "eintritte", color: "#10b981", name: "Eintritte" },
-                  { key: "austritte", color: "#ef4444", name: "Austritte" },
-                ]}
-                height={280}
-              />
-            </div>
-          </Section>
-
-          {/* ══════════════════════════════════════════════════════
-              VERTRIEB SECTION
-              ══════════════════════════════════════════════════════ */}
-          <Section title="Vertrieb">
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-              <StatCard
-                title="Telefonate"
-                value={t.telefonate}
-                change={prev ? pctChange(t.telefonate, prev.telefonate ?? 0) : undefined}
-                accent="from-blue-500 to-blue-600"
-              />
-              <StatCard
-                title="Akquiriert"
-                value={t.auftraegeAkquiriert}
-                change={prev ? pctChange(t.auftraegeAkquiriert, prev.auftraegeAkquiriert ?? 0) : undefined}
-                accent="from-violet-500 to-violet-600"
-              />
-              <StatCard
-                title="Abschlüsse"
-                value={t.auftraegeAbgeschlossen}
-                change={prev ? pctChange(t.auftraegeAbgeschlossen, prev.auftraegeAbgeschlossen ?? 0) : undefined}
-                subtitle={`Hit Rate: ${comp?.hitRate ?? hitRate}%`}
-                accent="from-emerald-500 to-emerald-600"
-              />
-              <StatCard
-                title="Conversion"
-                value={`${comp?.conversionRate ?? conversionRate}%`}
-                change={prevComp ? pctChange(comp?.conversionRate ?? conversionRate, prevComp.conversionRate) : undefined}
-                accent="from-amber-500 to-amber-600"
-              />
-            </div>
-
-            <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-card">
-              <h3 className="text-xs font-semibold text-gray-700 mb-3">Vertrieb - Trend</h3>
-              <KpiLineChart
-                data={trendData as Record<string, unknown>[]}
-                xKey="label"
-                lines={[
-                  { key: "telefonate", color: "#8b5cf6", name: "Telefonate" },
-                  { key: "auftraegeAkquiriert", color: "#10b981", name: "Akquiriert" },
-                  { key: "auftraegeAbgeschlossen", color: "#f59e0b", name: "Abschlüsse" },
-                ]}
-                height={280}
-              />
-            </div>
-
-            <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-card">
-              <h3 className="text-xs font-semibold text-gray-700 mb-3">Vertrieb-Funnel</h3>
-              <FunnelChart
-                steps={[
-                  { label: "Telefonate", value: t.telefonate, color: "#3b82f6" },
-                  { label: "Akquiriert", value: t.auftraegeAkquiriert, color: "#8b5cf6" },
-                  { label: "Abgeschlossen", value: t.auftraegeAbgeschlossen, color: "#10b981" },
-                ]}
-              />
-            </div>
-          </Section>
-
-          {/* ══════════════════════════════════════════════════════
-              KOSTENSTELLEN
-              ══════════════════════════════════════════════════════ */}
-          {stats.costCenterBreakdown.length > 0 && (
-            <Section title="Kostenstellen">
-              <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-card">
-                <h3 className="text-xs font-semibold text-gray-700 mb-3">Vergleich nach Kostenstellen</h3>
-                <KpiBarChart
-                  data={stats.costCenterBreakdown.map((cc) => ({ ...cc, name: `KST ${cc.costCenter}` }))}
-                  xKey="name"
-                  bars={[
-                    { key: "auftraegeAbgeschlossen", color: "#3b82f6", name: "Abschlüsse" },
-                    { key: "deals", color: "#10b981", name: "Deals" },
-                    { key: "profile", color: "#8b5cf6", name: "Profile" },
-                  ]}
-                />
-              </div>
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-card">
-                  <h3 className="text-xs font-semibold text-gray-700 mb-3">Vertrieb nach Kostenstelle</h3>
-                  <KpiPieChart data={costCenterPieData} donut />
-                </div>
-                <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-card">
-                  <h3 className="text-xs font-semibold text-gray-700 mb-3">Profile nach Kostenstelle</h3>
-                  <KpiPieChart data={profilePieData} donut />
-                </div>
-              </div>
-            </Section>
-          )}
-
-          {/* ══════════════════════════════════════════════════════
-              JAHRESVERGLEICH
-              ══════════════════════════════════════════════════════ */}
-          {yearCompData.length > 0 && yearCompYears.length > 0 && (
-            <Section title="Jahresvergleich">
-              <div className="grid grid-cols-1 gap-4">
-                <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-card">
-                  <h3 className="text-xs font-semibold text-gray-700 mb-3">Eintritte</h3>
-                  <KpiLineChart data={yearCompData} xKey="month" lines={yearCompYears.map((year, i) => ({ key: `eintritte_${year}`, color: YEAR_COLORS[i] || "#6b7280", name: year }))} />
-                </div>
-                <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-card">
-                  <h3 className="text-xs font-semibold text-gray-700 mb-3">Austritte</h3>
-                  <KpiLineChart data={yearCompData} xKey="month" lines={yearCompYears.map((year, i) => ({ key: `austritte_${year}`, color: YEAR_COLORS[i] || "#6b7280", name: year }))} />
-                </div>
-                <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-card">
-                  <h3 className="text-xs font-semibold text-gray-700 mb-3">Profile</h3>
-                  <KpiLineChart data={yearCompData} xKey="month" lines={yearCompYears.map((year, i) => ({ key: `profile_${year}`, color: YEAR_COLORS[i] || "#6b7280", name: year }))} />
-                </div>
-                <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-card">
-                  <h3 className="text-xs font-semibold text-gray-700 mb-3">Deals</h3>
-                  <KpiLineChart data={yearCompData} xKey="month" lines={yearCompYears.map((year, i) => ({ key: `deals_${year}`, color: YEAR_COLORS[i] || "#6b7280", name: year }))} />
-                </div>
-              </div>
-            </Section>
-          )}
-        </div>
+        <DashboardSkeleton />
+      ) : entries.length === 0 ? (
+        <EmptyState
+          icon="chart"
+          title="Keine KPI-Daten gefunden"
+          description="Passen Sie den Zeitraum oder die Filter an, oder erfassen Sie neue KPI-Daten."
+          action={{ label: "KPI erfassen", onClick: () => openKpiEntry() }}
+        />
       ) : (
-        <p className="text-xs text-gray-400">Keine Daten verfügbar.</p>
+        <div className="space-y-6">
+          {/* ── Comparison Table ── */}
+          <div className="bg-white rounded-xl shadow-card border border-gray-100 overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="bg-gray-50 border-b border-gray-200">
+                    <th className="text-left px-3 py-2.5 text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Mitarbeiter</th>
+                    <th className="text-center px-2 py-2.5 text-[11px] font-semibold text-gray-500 uppercase tracking-wide">KST</th>
+                    <th className="text-right px-2 py-2.5 text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Profile</th>
+                    <th className="text-right px-2 py-2.5 text-[11px] font-semibold text-gray-500 uppercase tracking-wide">VG&apos;s</th>
+                    <th className="text-right px-2 py-2.5 text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Deals</th>
+                    <th className="text-right px-2 py-2.5 text-[11px] font-semibold text-gray-500 uppercase tracking-wide">VG-Quote</th>
+                    <th className="text-right px-2 py-2.5 text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Deal-Quote</th>
+                    <th className="text-right px-2 py-2.5 text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Eintritte</th>
+                    <th className="text-right px-2 py-2.5 text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Austritte</th>
+                    <th className="text-right px-3 py-2.5 text-[11px] font-semibold text-gray-500 uppercase tracking-wide">MA-Wachstum</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {employeeRows.map((row) => (
+                    <tr key={row.employeeId} className="hover:bg-gray-50/50 transition-colors">
+                      <td className="px-3 py-2">
+                        <Link href={`/mitarbeiter/${row.employeeId}`} className="text-xs font-medium text-blue-600 hover:text-blue-800 hover:underline">
+                          {row.name}
+                        </Link>
+                      </td>
+                      <td className="text-center px-2 py-2"><Badge color={kstColor(row.costCenter)}>{row.costCenter}</Badge></td>
+                      <td className={`text-right px-2 py-2 text-xs ${aboveAvgClass(row.profile, averages?.profile)}`}>{fmt(row.profile)}</td>
+                      <td className={`text-right px-2 py-2 text-xs ${aboveAvgClass(row.vorstellungsgespraeche, averages?.vorstellungsgespraeche)}`}>{fmt(row.vorstellungsgespraeche)}</td>
+                      <td className={`text-right px-2 py-2 text-xs ${aboveAvgClass(row.deals, averages?.deals)}`}>{fmt(row.deals)}</td>
+                      <td className="text-right px-2 py-2 text-xs text-gray-900">{row.profile === 0 ? "–" : fmtPct(row.vgQuote)}</td>
+                      <td className="text-right px-2 py-2 text-xs text-gray-900">{row.profile === 0 ? "–" : fmtPct(row.dealQuote)}</td>
+                      <td className={`text-right px-2 py-2 text-xs ${aboveAvgClass(row.eintritte, averages?.eintritte)}`}>{fmt(row.eintritte)}</td>
+                      <td className="text-right px-2 py-2 text-xs text-gray-900">{fmt(row.austritte)}</td>
+                      <td className={`text-right px-3 py-2 text-xs ${wachstumClass(row.maWachstum)}`}>
+                        {row.maWachstum > 0 ? "+" : ""}{fmt(row.maWachstum)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                {averages && (
+                  <tfoot>
+                    {/* Durchschnitt row */}
+                    <tr className="bg-blue-50/50 border-t border-gray-200">
+                      <td className="px-3 py-2 text-xs font-semibold text-gray-600">Durchschnitt (Ø)</td>
+                      <td className="text-center px-2 py-2 text-[11px] text-gray-400">–</td>
+                      <td className="text-right px-2 py-2 text-xs font-medium text-gray-700">{averages.profile.toLocaleString("de-DE", { maximumFractionDigits: 1 })}</td>
+                      <td className="text-right px-2 py-2 text-xs font-medium text-gray-700">{averages.vorstellungsgespraeche.toLocaleString("de-DE", { maximumFractionDigits: 1 })}</td>
+                      <td className="text-right px-2 py-2 text-xs font-medium text-gray-700">{averages.deals.toLocaleString("de-DE", { maximumFractionDigits: 1 })}</td>
+                      <td className="text-right px-2 py-2 text-xs font-medium text-gray-700">{fmtPct(averages.vgQuote)}</td>
+                      <td className="text-right px-2 py-2 text-xs font-medium text-gray-700">{fmtPct(averages.dealQuote)}</td>
+                      <td className="text-right px-2 py-2 text-xs font-medium text-gray-700">{averages.eintritte.toLocaleString("de-DE", { maximumFractionDigits: 1 })}</td>
+                      <td className="text-right px-2 py-2 text-xs font-medium text-gray-700">{averages.austritte.toLocaleString("de-DE", { maximumFractionDigits: 1 })}</td>
+                      <td className={`text-right px-3 py-2 text-xs font-medium ${wachstumClass(averages.maWachstum)}`}>
+                        {averages.maWachstum > 0 ? "+" : ""}{averages.maWachstum.toLocaleString("de-DE", { maximumFractionDigits: 1 })}
+                      </td>
+                    </tr>
+                    {/* Gesamt row */}
+                    <tr className="bg-gray-50 border-t border-gray-200">
+                      <td className="px-3 py-2 text-xs font-bold text-gray-800">Gesamt</td>
+                      <td className="text-center px-2 py-2 text-[11px] text-gray-400">–</td>
+                      <td className="text-right px-2 py-2 text-xs font-bold text-gray-800">{fmt(totals.profile)}</td>
+                      <td className="text-right px-2 py-2 text-xs font-bold text-gray-800">{fmt(totals.vorstellungsgespraeche)}</td>
+                      <td className="text-right px-2 py-2 text-xs font-bold text-gray-800">{fmt(totals.deals)}</td>
+                      <td className="text-right px-2 py-2 text-xs font-bold text-gray-800">{fmtPct(totals.vgQuote)}</td>
+                      <td className="text-right px-2 py-2 text-xs font-bold text-gray-800">{fmtPct(totals.dealQuote)}</td>
+                      <td className="text-right px-2 py-2 text-xs font-bold text-gray-800">{fmt(totals.eintritte)}</td>
+                      <td className="text-right px-2 py-2 text-xs font-bold text-gray-800">{fmt(totals.austritte)}</td>
+                      <td className={`text-right px-3 py-2 text-xs font-bold ${wachstumClass(totals.maWachstum)}`}>
+                        {totals.maWachstum > 0 ? "+" : ""}{fmt(totals.maWachstum)}
+                      </td>
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
+          </div>
+
+          {/* ── Missing Months Warning ── */}
+          {totalMissingCount > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+              <div className="flex items-start gap-3">
+                <svg className="w-5 h-5 text-amber-500 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth="2" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                </svg>
+                <div className="flex-1">
+                  <h3 className="text-xs font-semibold text-amber-800 mb-2">
+                    {totalMissingCount} fehlende {totalMissingCount === 1 ? "Monat" : "Monate"}
+                  </h3>
+                  <div className="space-y-1.5">
+                    {missingMonths.filter((d) => d.missingMonths.length > 0).map((detail) => (
+                      <div key={detail.employeeId} className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-[11px] font-medium text-amber-700 w-20">{detail.employeeName}:</span>
+                        <div className="flex flex-wrap gap-1">
+                          {detail.missingMonths.map((m) => (
+                            <button
+                              key={m.month}
+                              onClick={() => router.push(`/mitarbeiter/${detail.employeeId}`)}
+                              className="px-1.5 py-0.5 text-[10px] font-bold bg-red-100 text-red-700 rounded hover:bg-red-200 transition-colors"
+                            >
+                              {m.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── Ranking ── */}
+          <div className="bg-white rounded-xl shadow-card border border-gray-100 p-4">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-bold text-gray-800 flex items-center gap-2">
+                <svg className="w-4 h-4 text-amber-500" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.414L11 9.586V6z" clipRule="evenodd" />
+                </svg>
+                Ranking
+              </h2>
+              <select
+                value={rankingMetric}
+                onChange={(e) => setRankingMetric(e.target.value)}
+                className={selectClass}
+              >
+                {KPI_RANKING_METRICS.map((m) => (
+                  <option key={m.key} value={m.key}>{m.label}</option>
+                ))}
+              </select>
+            </div>
+
+            {rankingData.length === 0 ? (
+              <p className="text-xs text-gray-400 text-center py-6">Keine Daten vorhanden</p>
+            ) : (
+              <div className="space-y-2.5">
+                {rankingData.map((row, i) => (
+                  <div key={row.name} className="flex items-center gap-3">
+                    <span className={`text-xs font-bold w-5 text-right ${i === 0 ? "text-amber-500" : i === 1 ? "text-gray-400" : i === 2 ? "text-amber-700" : "text-gray-300"}`}>
+                      {i + 1}.
+                    </span>
+                    <span className="text-xs font-medium text-gray-700 w-20 truncate">{row.name}</span>
+                    <div className="flex-1 bg-gray-100 rounded-full h-6 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all duration-500 flex items-center px-2 ${
+                          i === 0 ? "bg-gradient-to-r from-blue-500 to-blue-600" :
+                          i === 1 ? "bg-gradient-to-r from-blue-400 to-blue-500" :
+                          i === 2 ? "bg-gradient-to-r from-blue-300 to-blue-400" :
+                          "bg-gray-300"
+                        }`}
+                        style={{ width: `${Math.max((row.value / maxRankingValue) * 100, 8)}%` }}
+                      >
+                        <span className="text-[11px] font-bold text-white">{fmt(row.value)}</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </AppShell>
   );

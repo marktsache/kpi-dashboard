@@ -8,11 +8,12 @@ datasource db {
 }
 
 model User {
-  id       String @id @default(cuid())
-  email    String @unique
+  id       String  @id @default(cuid())
+  email    String  @unique
   password String
   name     String
-  role     String @default("admin")
+  role     String  @default("admin")
+  photoUrl String?
 }
 
 model Employee {
@@ -20,9 +21,13 @@ model Employee {
   name       String
   email      String?
   costCenter String
+  photoUrl   String?
+  jobTitle   String?
+  startDate  DateTime?
   active     Boolean    @default(true)
   createdAt  DateTime   @default(now())
-  kpiEntries KpiEntry[]
+  kpiEntries   KpiEntry[]
+  closedMonths ClosedMonth[]
 }
 
 model KpiEntry {
@@ -41,18 +46,29 @@ model KpiEntry {
   auftraegeAbgeschlossen Int @default(0)
 
   // Profile / Recruiting
-  profile                Int @default(0)
-  vorstellungsgespraeche Int @default(0)
-  deals                  Int @default(0)
+  profile                Int?
+  vorstellungsgespraeche Int?
+  deals                  Int?
 
   // Personal
-  eintritte Int @default(0)
-  austritte Int @default(0)
+  eintritte Int?
+  austritte Int?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([employeeId, date])
+}
+
+model ClosedMonth {
+  id         String   @id @default(cuid())
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  year       Int
+  month      Int      // 0-11
+  closedAt   DateTime @default(now())
+
+  @@unique([employeeId, year, month])
 }
 
 model AuditLog {
