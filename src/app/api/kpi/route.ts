@@ -50,6 +50,9 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const nullableInt = (val: unknown): number | null =>
+    val === null || val === undefined ? null : Number(val);
+
   const upsertEntry = (entry: Record<string, unknown>) =>
     prisma.kpiEntry.upsert({
       where: {
@@ -61,23 +64,23 @@ export async function POST(request: NextRequest) {
       update: {
         costCenter: entry.costCenter as string,
         comment: (entry.comment as string) || null,
-        profile: (entry.profile as number) || 0,
-        vorstellungsgespraeche: (entry.vorstellungsgespraeche as number) || 0,
-        deals: (entry.deals as number) || 0,
-        eintritte: (entry.eintritte as number) || 0,
-        austritte: (entry.austritte as number) || 0,
+        profile: nullableInt(entry.profile),
+        vorstellungsgespraeche: nullableInt(entry.vorstellungsgespraeche),
+        deals: nullableInt(entry.deals),
+        eintritte: nullableInt(entry.eintritte),
+        austritte: nullableInt(entry.austritte),
       },
       create: {
         employeeId: entry.employeeId as string,
         date: new Date(entry.date as string),
-        periodType: "week",
+        periodType: "month",
         costCenter: entry.costCenter as string,
         comment: (entry.comment as string) || null,
-        profile: (entry.profile as number) || 0,
-        vorstellungsgespraeche: (entry.vorstellungsgespraeche as number) || 0,
-        deals: (entry.deals as number) || 0,
-        eintritte: (entry.eintritte as number) || 0,
-        austritte: (entry.austritte as number) || 0,
+        profile: nullableInt(entry.profile),
+        vorstellungsgespraeche: nullableInt(entry.vorstellungsgespraeche),
+        deals: nullableInt(entry.deals),
+        eintritte: nullableInt(entry.eintritte),
+        austritte: nullableInt(entry.austritte),
       },
     });
 

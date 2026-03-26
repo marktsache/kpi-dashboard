@@ -1020,7 +1020,7 @@ export default function MitarbeiterDetailPage() {
                     <td className="py-2.5 px-3 text-xs">Gesamt {selectedYear}</td>
                     <td className="text-right py-2.5 px-3 tabular-nums">{fmt(yearTotal.profile)}</td>
                     <td className="text-right py-2.5 px-3 tabular-nums">{fmt(yearTotal.deals)}</td>
-                    <td className="text-right py-2.5 px-3 tabular-nums">{fmtPct(yearTotal.dealQuote)}</td>
+                    <td className="text-right py-2.5 px-3 tabular-nums text-gray-300">&ndash;</td>
                     <td className="relative"><div className="absolute inset-y-0 left-1/2 w-px bg-gray-100" /></td>
                     <td className="text-right py-2.5 px-3 tabular-nums">{fmt(yearTotal.eintritte)}</td>
                     <td className="text-right py-2.5 px-3 tabular-nums">{fmt(yearTotal.austritte)}</td>
