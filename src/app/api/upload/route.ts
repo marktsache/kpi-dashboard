@@ -3,6 +3,8 @@ import { getServerSession } from "next-auth";
 import { writeFile, mkdir } from "fs/promises";
 import path from "path";
 
+export const dynamic = "force-dynamic";
+
 export async function POST(request: NextRequest) {
   const session = await getServerSession();
   if (!session) {

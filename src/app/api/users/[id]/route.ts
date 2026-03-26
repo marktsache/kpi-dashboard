@@ -5,6 +5,8 @@ import { authOptions } from "@/lib/auth";
 import { userUpdateSchema } from "@/lib/validation";
 import bcrypt from "bcryptjs";
 
+export const dynamic = "force-dynamic";
+
 export async function PUT(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const session = await getServerSession(authOptions);

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 
+export const dynamic = "force-dynamic";
+
 /** Get ISO week number (1-53) for a Date. */
 function getISOWeek(d: Date): number {
   const tmp = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 
+export const dynamic = "force-dynamic";
+
 // GET /api/closed-months?employeeId=xxx
 export async function GET(req: NextRequest) {
   const employeeId = req.nextUrl.searchParams.get("employeeId");

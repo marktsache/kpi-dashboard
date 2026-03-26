@@ -5,6 +5,8 @@ import { authOptions } from "@/lib/auth";
 import { employeeUpdateSchema } from "@/lib/validation";
 import { logAudit } from "@/lib/audit";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const employee = await prisma.employee.findUnique({

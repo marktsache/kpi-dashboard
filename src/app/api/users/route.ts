@@ -5,6 +5,8 @@ import { authOptions } from "@/lib/auth";
 import { userCreateSchema } from "@/lib/validation";
 import bcrypt from "bcryptjs";
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   const session = await getServerSession(authOptions);
   if (!session) {

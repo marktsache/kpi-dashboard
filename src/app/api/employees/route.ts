@@ -5,6 +5,8 @@ import { authOptions } from "@/lib/auth";
 import { employeeCreateSchema } from "@/lib/validation";
 import { logAudit } from "@/lib/audit";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const costCenter = searchParams.get("costCenter");
