@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { Suspense, useEffect, useState, useCallback, useRef } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AppShell } from "@/components/layout/app-shell";
@@ -95,6 +95,14 @@ const emptyForm: EmployeeFormData = { name: "", costCenter: "330", jobTitle: "",
 // ── Component ──────────────────────────────────────────────────────────────
 
 export default function EinstellungenPage() {
+  return (
+    <Suspense fallback={<Loading text="Laden..." className="min-h-screen" />}>
+      <EinstellungenContent />
+    </Suspense>
+  );
+}
+
+function EinstellungenContent() {
   const { status, data: session, update: updateSession } = useSession();
   const router = useRouter();
   const searchParams = useSearchParams();
